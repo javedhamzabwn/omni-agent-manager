@@ -35,7 +35,7 @@ if not defined WT_SESSION (
         where wt.exe >nul 2>&1
         if !errorlevel! equ 0 (
             set "OMNI_NO_WT=1"
-            start "" wt.exe -d "%APP_DIR%" cmd /c ""%APP_BAT%" %*"
+            start "" wt.exe -d "%APP_DIR%" cmd /c call omni_agent_manager.bat %*
             exit /b 0
         )
     )
@@ -61,9 +61,9 @@ echo.
 
 where wt.exe >nul 2>&1
 if %errorlevel% equ 0 (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process wt.exe -ArgumentList '-d `\"%APP_DIR%`\" cmd /c `\"`\"%APP_BAT%`\" --elevated %*`\"' -Verb RunAs"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process wt.exe -ArgumentList '-d `\"%APP_DIR%`\" cmd /c call omni_agent_manager.bat --elevated %*' -Verb RunAs"
 ) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%APP_BAT%' -ArgumentList '--elevated %*' -WorkingDirectory '%APP_DIR%' -Verb RunAs"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process cmd.exe -ArgumentList '/c cd /d `\"%APP_DIR%`\" ^&^& call omni_agent_manager.bat --elevated %*' -Verb RunAs"
 )
 exit /b 0
 
