@@ -16,8 +16,10 @@ import shutil
 import re
 import subprocess
 import socket
+import urllib
 import urllib.request
 import urllib.error
+import urllib.parse
 import difflib
 import time
 
@@ -25,12 +27,14 @@ try:
     import httpx
     HAS_HTTPX = True
 except ImportError:
+    httpx = None
     HAS_HTTPX = False
 
 try:
     import psutil
     HAS_PSUTIL = True
 except ImportError:
+    psutil = None
     HAS_PSUTIL = False
 
 
@@ -3390,37 +3394,34 @@ def load_user_theme() -> str:
     return "github-dark"
 
 def desktop_open_explorer(path):
-    if open_in_explorer_fn:
-        return open_in_explorer_fn(path)
     if not os.path.exists(path):
         return False, f"Path not found: {path}"
     try:
-        if os.path.isdir(path):
-            os.startfile(path)
+        norm_path = os.path.normpath(path)
+        if os.path.isdir(norm_path):
+            os.startfile(norm_path)
         else:
-            subprocess.run(f'explorer.exe /select,"{path}"', shell=True)
+            subprocess.Popen(f'explorer.exe /select,"{norm_path}"', shell=True)
         return True, "Opened in Windows Explorer!"
     except Exception as e:
         return False, str(e)
 
 def desktop_open_editor(path):
-    if open_in_editor_fn:
-        return open_in_editor_fn(path)
     if not os.path.exists(path):
         return False, f"Path not found: {path}"
     try:
-        os.startfile(path)
+        norm_path = os.path.normpath(path)
+        os.startfile(norm_path)
         return True, "Opened in default editor!"
     except Exception:
         try:
-            subprocess.run(f'notepad.exe "{path}"', shell=True)
+            norm_path = os.path.normpath(path)
+            subprocess.Popen(f'notepad.exe "{norm_path}"', shell=True)
             return True, "Opened in Notepad!"
         except Exception as e:
             return False, str(e)
 
 def desktop_copy_clipboard(text):
-    if copy_to_clipboard_fn:
-        return copy_to_clipboard_fn(text)
     try:
         subprocess.run('clip', input=text.strip().encode('utf-8'), shell=True, check=True)
         return True, "Copied to clipboard!"
@@ -3428,13 +3429,14 @@ def desktop_copy_clipboard(text):
         return False, str(e)
 
 def desktop_open_terminal(path):
-    if open_terminal_fn:
-        return open_terminal_fn(path)
+    if not os.path.exists(path):
+        return False, f"Path not found: {path}"
     dir_p = path if os.path.isdir(path) else os.path.dirname(path)
     if not os.path.exists(dir_p):
         return False, f"Directory not found: {dir_p}"
     try:
-        subprocess.run(f'start cmd.exe /k "cd /d {dir_p}"', shell=True)
+        norm_p = os.path.normpath(dir_p)
+        subprocess.Popen(f'start cmd.exe /k "cd /d {norm_p}"', shell=True)
         return True, "Terminal opened!"
     except Exception as e:
         return False, str(e)
@@ -3815,7 +3817,7 @@ if HAS_TEXTUAL:
             align: center middle;
         }
         #ping-box {
-            width: 58;
+            width: 68;
             height: auto;
             background: $surface;
             border: round $primary;
@@ -3825,38 +3827,131 @@ if HAS_TEXTUAL:
             color: $warning;
             margin-bottom: 1;
         }
-        #ping-result {
+        #ping-card {
+            background: $background;
+            border: round $panel;
+            padding: 1;
             margin-top: 1;
             margin-bottom: 1;
+        }
+        #ping-result {
             text-style: bold;
+        }
+        #ping-latency {
+            margin-top: 1;
+        }
+        #ping-details {
+            margin-top: 1;
         }
         .btn-bar {
             margin-top: 1;
-            height: 3;
+            height: 1;
         }
         """
         def __init__(self, url):
             super().__init__()
-            self.url = url
+            self.url = url or "http://localhost:11434"
+            self.probe_in_progress = False
 
         def compose(self) -> ComposeResult:
             with Vertical(id="ping-box"):
-                yield Label("[b cyan]⚡ AI ENDPOINT CONNECTIVITY TEST[/b cyan]")
+                yield Label("[b cyan]⚡ AI ENDPOINT CONNECTIVITY PROBE[/b cyan]")
                 yield Label(f"Target: {self.url}", id="ping-url")
-                yield Label("Pinging server...", id="ping-result")
+                with Vertical(id="ping-card"):
+                    yield Label("[bold cyan]⏳ Probing endpoint connectivity...[/bold cyan]", id="ping-result")
+                    yield Label("[dim]Latency: measuring...[/dim]", id="ping-latency")
+                    yield Label("[dim]Engine: probing...[/dim]", id="ping-details")
                 with Horizontal(classes="btn-bar"):
-                    yield Button("Close Window", id="btn-close", variant="primary")
+                    yield Button("🔄 Retest [R]", id="btn-retest", variant="warning")
+                    yield Button("✕ Close [Esc]", id="btn-close", variant="primary")
 
         def on_mount(self):
-            ok, msg = test_ping_endpoint(self.url)
-            lbl = self.query_one("#ping-result", Label)
-            if ok:
-                lbl.update(f"[b green]ONLINE:[/b green] {msg}")
-            else:
-                lbl.update(f"[b red]OFFLINE:[/b red] {msg}")
+            self.trigger_ping()
+
+        def trigger_ping(self):
+            if self.probe_in_progress:
+                return
+            self.probe_in_progress = True
+            try:
+                self.query_one("#ping-result", Label).update("[bold cyan]⏳ Probing endpoint connectivity...[/bold cyan]")
+                self.query_one("#ping-latency", Label).update("[dim]Latency: measuring...[/dim]")
+                self.query_one("#ping-details", Label).update("[dim]Engine: probing...[/dim]")
+            except Exception:
+                pass
+            self.ping_worker()
+
+        @work(thread=True)
+        def ping_worker(self):
+            target = self.url.strip()
+            if not target.startswith("http://") and not target.startswith("https://"):
+                target = "http://" + target
+            probe_targets = [target.rstrip('/') + '/models', target]
+            
+            t0 = time.perf_counter()
+            success = False
+            status_text = ""
+            details = "Standard HTTP Endpoint"
+            
+            for p in probe_targets:
+                try:
+                    req = urllib.request.Request(p, headers={'User-Agent': 'OmniAgentPing/1.0'})
+                    with urllib.request.urlopen(req, timeout=2.5) as resp:
+                        http_code = resp.status
+                        success = True
+                        status_text = f"HTTP {http_code} OK"
+                        server_hdr = resp.headers.get("Server", "")
+                        if "ollama" in server_hdr.lower() or ":11434" in target:
+                            details = "Ollama Local Engine (Verified)"
+                        elif ":1234" in target:
+                            details = "LM Studio Local Server"
+                        elif ":8000" in target or ":5000" in target:
+                            details = "vLLM / Local Inference Server"
+                        else:
+                            details = f"Active Web Service ({server_hdr or 'HTTP REST'})"
+                        break
+                except urllib.error.HTTPError as e:
+                    if e.code in (401, 403, 404, 405):
+                        success = True
+                        status_text = f"HTTP {e.code} (Endpoint Verified)"
+                        details = f"Endpoint responded ({e.reason})"
+                        break
+                    else:
+                        status_text = f"HTTP {e.code} ({e.reason})"
+                except Exception as e:
+                    status_text = str(e)
+                    continue
+
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            self.app.call_from_thread(self._apply_ping_result, success, status_text, latency_ms, details)
+
+        def _apply_ping_result(self, success: bool, status_text: str, latency_ms: int, details: str):
+            self.probe_in_progress = False
+            try:
+                res_lbl = self.query_one("#ping-result", Label)
+                lat_lbl = self.query_one("#ping-latency", Label)
+                det_lbl = self.query_one("#ping-details", Label)
+                if success:
+                    res_lbl.update(f"[b #a6e3a1]● ONLINE[/b #a6e3a1]  [white]{status_text}[/white]")
+                    lat_lbl.update(f"[bold green]⚡ Latency:[/bold green] [bold white]{latency_ms} ms[/bold white]")
+                    det_lbl.update(f"[dim]Engine/Type:[/dim] [cyan]{details}[/cyan]")
+                else:
+                    res_lbl.update(f"[b #f38ba8]○ OFFLINE / UNREACHABLE[/b #f38ba8]")
+                    lat_lbl.update(f"[bold red]⏱ Latency:[/bold red] [dim]{latency_ms} ms (Timeout)[/dim]")
+                    det_lbl.update(f"[dim]Error:[/dim] [yellow]{status_text or 'Connection refused / timed out'}[/yellow]")
+            except Exception:
+                pass
 
         def on_button_pressed(self, event: Button.Pressed):
-            self.dismiss()
+            if event.button.id == "btn-retest":
+                self.trigger_ping()
+            else:
+                self.dismiss()
+
+        def on_key(self, event):
+            if event.key in ("r", "R"):
+                self.trigger_ping()
+            elif event.key in ("escape", "enter"):
+                self.dismiss()
 
     class DesktopAddProviderModal(ModalScreen):
         CSS = """
@@ -4916,30 +5011,41 @@ if HAS_TEXTUAL:
             padding: 1 2;
             margin-bottom: 1;
         }
-        .action-bar {
-            height: auto;
-            min-height: 3;
-            margin-bottom: 1;
-            overflow-x: auto;
-            overflow-y: hidden;
-        }
-        .action-bar Button {
-            margin-right: 1;
-            min-width: 8;
-            height: 3;
-            padding: 0 1;
-            border: none;
-        }
         #skills-filter {
             margin-bottom: 1;
             border: round $primary;
             background: $surface;
         }
+        #explorer-toolbar {
+            height: 3;
+            margin-bottom: 1;
+            align-vertical: middle;
+        }
         #sel-explorer-cat {
-            width: 42;
+            width: 44;
+            height: 3;
             margin-right: 1;
             background: $surface;
             border: round $primary;
+        }
+        #explorer-actions {
+            height: 3;
+            width: 1fr;
+            align-vertical: middle;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+        #explorer-actions Button {
+            height: 1;
+            min-width: 8;
+            margin-right: 1;
+            border: none;
+        }
+        #table-explorer {
+            width: 100%;
+            height: 1fr;
+            border: round $panel;
+            background: $surface;
         }
         DataTable {
             height: 1fr;
@@ -5115,12 +5221,13 @@ if HAS_TEXTUAL:
                             yield DataTable(id="table-presets")
 
                         with TabPane("📂 Explorer [F]", id="pane-explorer"):
-                            with HorizontalScroll(classes="action-bar"):
+                            with Horizontal(id="explorer-toolbar"):
                                 yield Select(options=[], id="sel-explorer-cat", prompt="Choose Category...")
-                                yield Button("📁 Explorer", id="btn-exp-explorer", variant="success")
-                                yield Button("📝 Editor", id="btn-exp-editor", variant="primary")
-                                yield Button("📋 Copy", id="btn-exp-copy", variant="default")
-                                yield Button("💻 Terminal", id="btn-exp-terminal", variant="warning")
+                                with HorizontalScroll(id="explorer-actions"):
+                                    yield Button("📁 Explorer", id="btn-exp-explorer", variant="success")
+                                    yield Button("📝 Editor", id="btn-exp-editor", variant="primary")
+                                    yield Button("📋 Copy Path", id="btn-exp-copy", variant="default")
+                                    yield Button("💻 Terminal", id="btn-exp-terminal", variant="warning")
                             yield DataTable(id="table-explorer")
 
                         with TabPane("🌐 Matrix", id="pane-global"):
@@ -5459,6 +5566,13 @@ if HAS_TEXTUAL:
                 st = "[bold #a6e3a1]  ● EXISTS  [/bold #a6e3a1]" if exists else "[dim #f38ba8]  ○ NOT FOUND[/dim #f38ba8]"
                 t_str = "[cyan]Folder[/cyan]" if is_dir else "[yellow]File[/yellow]"
                 exp_table.add_row(st, t_str, name, path, desc, key=f"exp-{idx}")
+
+            if exp_table.row_count > 0:
+                try:
+                    exp_table.move_cursor(row=0, column=0, scroll=True)
+                    exp_table.scroll_to(x=0, y=0)
+                except Exception:
+                    pass
 
         def load_global_matrix(self):
             g_table = self.query_one("#table-global", DataTable)

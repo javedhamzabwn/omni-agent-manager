@@ -66,8 +66,69 @@ if not exist "%APP_PY%" (
     exit /b 1
 )
 
-:: Run Python script
-python "%APP_PY%" %*
+:: If explicit arguments passed, execute directly without menu
+if not "%~1"=="" (
+    python "%APP_PY%" %*
+    goto :check_exit
+)
+
+:: Otherwise, display interactive launcher menu
+:menu
+cls
+echo ======================================================================
+echo   OMNIAGENT MANAGER - UNIVERSAL AI AGENT CONTROL HUB
+echo ======================================================================
+echo.
+echo   [1] Desktop TUI Dashboard (Default - Press Enter)
+echo   [2] Classic Minimal Terminal Menu (--classic)
+echo   [3] Agent Folders Explorer (--folders)
+echo   [4] Fleet ^& Process Radar (--radar)
+echo   [5] Run MCP Health Heartbeats (--health)
+echo   [6] Exit
+echo.
+echo ======================================================================
+set "CHOICE="
+set /p "CHOICE=Select an option [1-6] (Default: 1): "
+
+if "%CHOICE%"=="" goto :opt1
+if "%CHOICE%"=="1" goto :opt1
+if "%CHOICE%"=="2" goto :opt2
+if "%CHOICE%"=="3" goto :opt3
+if "%CHOICE%"=="4" goto :opt4
+if "%CHOICE%"=="5" goto :opt5
+if "%CHOICE%"=="6" goto :opt6
+echo [Invalid selection: %CHOICE%]
+timeout /t 2 >nul
+goto :menu
+
+:opt1
+python "%APP_PY%"
+goto :check_exit
+
+:opt2
+python "%APP_PY%" --classic
+goto :check_exit
+
+:opt3
+python "%APP_PY%" --folders
+goto :check_exit
+
+:opt4
+python "%APP_PY%" --radar
+echo.
+pause
+goto :check_exit
+
+:opt5
+python "%APP_PY%" --health
+echo.
+pause
+goto :check_exit
+
+:opt6
+exit /b 0
+
+:check_exit
 if %errorlevel% neq 0 (
     echo.
     echo [NOTE] OmniAgent Manager exited with code %errorlevel%.
@@ -78,3 +139,4 @@ if %errorlevel% neq 0 (
     echo.
     pause
 )
+exit /b %errorlevel%
