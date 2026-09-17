@@ -817,6 +817,511 @@ def discover_installed_agents():
 
     return detected
 
+# ================= ONLINE CODING AGENTS & CURATED SKILLS REGISTRIES =================
+
+CUSTOM_AGENTS_FILE = os.path.join(USERPROFILE, ".omni_custom_agents.json")
+
+def get_custom_agents():
+    if not os.path.exists(CUSTOM_AGENTS_FILE):
+        return []
+    try:
+        with open(CUSTOM_AGENTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def save_custom_agent(agent_def):
+    cur = get_custom_agents()
+    cur = [a for a in cur if a.get("id") != agent_def.get("id")]
+    cur.append(agent_def)
+    try:
+        with open(CUSTOM_AGENTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(cur, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+AGENT_CATALOG = [
+    {
+        "id": "aider",
+        "name": "Aider AI Pair Programmer",
+        "category": "Terminal CLI",
+        "desc": "Terminal pair programming tool with git auto-commits and multi-model support",
+        "cli_name": "aider",
+        "detect_type": "cli",
+        "install_cmd": "python -m pip install -U aider-chat",
+        "uninstall_cmd": "pip uninstall -y aider-chat",
+        "docs": "https://aider.chat"
+    },
+    {
+        "id": "claude",
+        "name": "Claude Code CLI",
+        "category": "Terminal CLI",
+        "desc": "Anthropic's official agentic coding tool for terminal workflows",
+        "cli_name": "claude",
+        "detect_type": "cli",
+        "install_cmd": "npm install -g @anthropic-ai/claude-code",
+        "uninstall_cmd": "npm uninstall -g @anthropic-ai/claude-code",
+        "docs": "https://docs.anthropic.com/en/docs/agents-and-tools/claude-code"
+    },
+    {
+        "id": "goose",
+        "name": "Goose AI Agent",
+        "category": "Autonomous CLI",
+        "desc": "Open-source extensible AI agent by Block with native MCP integration",
+        "cli_name": "goose",
+        "detect_type": "cli",
+        "install_cmd": "python -m pip install goose-ai",
+        "uninstall_cmd": "pip uninstall -y goose-ai",
+        "docs": "https://github.com/block/goose"
+    },
+    {
+        "id": "opencode",
+        "name": "OpenCode AI Assistant",
+        "category": "CLI & Desktop",
+        "desc": "Autonomous developer engine with multi-model gateway and desktop studio",
+        "cli_name": "opencode",
+        "detect_type": "cli",
+        "install_cmd": "npm install -g opencode-ai",
+        "uninstall_cmd": "npm uninstall -g opencode-ai",
+        "docs": "https://github.com/opencode-ai"
+    },
+    {
+        "id": "cline",
+        "name": "Cline (VS Code AI Agent)",
+        "category": "VS Code Extension",
+        "desc": "Autonomous coding agent in VS Code using tools, shell execution, & MCPs",
+        "cli_name": "code",
+        "ext_id": "saoudrizwan.claude-dev",
+        "detect_type": "vscode_ext",
+        "install_cmd": "code --install-extension saoudrizwan.claude-dev",
+        "uninstall_cmd": "code --uninstall-extension saoudrizwan.claude-dev",
+        "docs": "https://github.com/cline/cline"
+    },
+    {
+        "id": "roo-cline",
+        "name": "Roo Code (Roo Cline)",
+        "category": "VS Code Extension",
+        "desc": "Autonomous agent extension with custom modes, context optimization, & MCPs",
+        "cli_name": "code",
+        "ext_id": "rooveterinaryinc.roo-cline",
+        "detect_type": "vscode_ext",
+        "install_cmd": "code --install-extension rooveterinaryinc.roo-cline",
+        "uninstall_cmd": "code --uninstall-extension rooveterinaryinc.roo-cline",
+        "docs": "https://github.com/RooVetGit/Roo-Cline"
+    },
+    {
+        "id": "continue",
+        "name": "Continue Open-Source AI",
+        "category": "VS Code Extension",
+        "desc": "Open-source autopilot for VS Code and JetBrains connecting to any LLM",
+        "cli_name": "code",
+        "ext_id": "continue.continue",
+        "detect_type": "vscode_ext",
+        "install_cmd": "code --install-extension continue.continue",
+        "uninstall_cmd": "code --uninstall-extension continue.continue",
+        "docs": "https://continue.dev"
+    },
+    {
+        "id": "cursor",
+        "name": "Cursor IDE",
+        "category": "Desktop IDE",
+        "desc": "AI-first code editor with inline edits, multi-file codebase indexing",
+        "cli_name": "cursor",
+        "detect_type": "app",
+        "app_paths": [
+            os.path.join(LOCALAPPDATA, "Programs", "cursor", "Cursor.exe"),
+            os.path.join(USERPROFILE, "AppData", "Local", "Programs", "cursor", "Cursor.exe")
+        ],
+        "install_cmd": "winget install Anysphere.Cursor --silent --accept-source-agreements --accept-package-agreements",
+        "uninstall_cmd": "winget uninstall Anysphere.Cursor",
+        "docs": "https://cursor.com"
+    },
+    {
+        "id": "amazon-q",
+        "name": "Amazon Q Developer",
+        "category": "CLI & IDE",
+        "desc": "AWS generative AI assistant with terminal completion and code transformation",
+        "cli_name": "q",
+        "detect_type": "cli",
+        "install_cmd": "winget install Amazon.Q --silent --accept-source-agreements --accept-package-agreements",
+        "uninstall_cmd": "winget uninstall Amazon.Q",
+        "docs": "https://aws.amazon.com/q/developer"
+    },
+    {
+        "id": "openhands",
+        "name": "OpenHands (OpenDevin)",
+        "category": "Autonomous Platform",
+        "desc": "Platform for AI software development agents that plan, code, and execute",
+        "cli_name": "openhands",
+        "detect_type": "cli",
+        "install_cmd": "python -m pip install openhands-ai",
+        "uninstall_cmd": "pip uninstall -y openhands-ai",
+        "docs": "https://github.com/All-Hands-AI/OpenHands"
+    },
+    {
+        "id": "antigravity",
+        "name": "Google Antigravity Agent",
+        "category": "IDE & CLI",
+        "desc": "Google DeepMind pair programming and multi-agent IDE engine",
+        "cli_name": "agy",
+        "detect_type": "cli",
+        "install_cmd": "npm install -g @google/antigravity",
+        "uninstall_cmd": "npm uninstall -g @google/antigravity",
+        "docs": "https://antigravity.google"
+    },
+    {
+        "id": "codex",
+        "name": "OpenAI Codex Agent",
+        "category": "Terminal CLI",
+        "desc": "Codex command-line assistant with MCP tool execution runtime",
+        "cli_name": "codex",
+        "detect_type": "cli",
+        "install_cmd": "npm install -g @openai/codex",
+        "uninstall_cmd": "npm uninstall -g @openai/codex",
+        "docs": "https://openai.com"
+    },
+    {
+        "id": "void",
+        "name": "Void AI Editor",
+        "category": "Desktop IDE",
+        "desc": "Open-source Cursor alternative giving full control over AI code and telemetry",
+        "cli_name": "void",
+        "detect_type": "app",
+        "app_paths": [
+            os.path.join(LOCALAPPDATA, "Programs", "void", "Void.exe")
+        ],
+        "install_cmd": "winget install Void.Void --silent --accept-source-agreements --accept-package-agreements",
+        "uninstall_cmd": "winget uninstall Void.Void",
+        "docs": "https://voideditor.com"
+    },
+    {
+        "id": "melty",
+        "name": "Melty AI Code Editor",
+        "category": "Desktop IDE",
+        "desc": "Open-source AI-native code editor tracking full dev workflow and intent",
+        "cli_name": "melty",
+        "detect_type": "app",
+        "app_paths": [
+            os.path.join(LOCALAPPDATA, "Programs", "melty", "Melty.exe")
+        ],
+        "install_cmd": "winget install Melty.Melty --silent --accept-source-agreements --accept-package-agreements",
+        "uninstall_cmd": "winget uninstall Melty.Melty",
+        "docs": "https://melty.eco"
+    },
+    {
+        "id": "kilo",
+        "name": "Kilo Code Extension",
+        "category": "VS Code Extension",
+        "desc": "Fast task execution and timeline assistant for VS Code",
+        "cli_name": "code",
+        "ext_id": "kilo-code.kilo",
+        "detect_type": "vscode_ext",
+        "install_cmd": "code --install-extension kilo-code.kilo",
+        "uninstall_cmd": "code --uninstall-extension kilo-code.kilo",
+        "docs": "https://github.com/kilo-code"
+    },
+    {
+        "id": "kiro",
+        "name": "Kiro Agent",
+        "category": "Terminal CLI",
+        "desc": "Rule enforcer and fast automated task executor",
+        "cli_name": "kiro",
+        "detect_type": "cli",
+        "install_cmd": "npm install -g kiro-agent",
+        "uninstall_cmd": "npm uninstall -g kiro-agent",
+        "docs": "https://github.com/kiro-agent"
+    }
+]
+
+REGISTRY_SKILLS = [
+    {"id": "systematic-debugging", "name": "Systematic Debugging", "category": "Problem Solving", "desc": "Diagnosis loop for hard bugs and regressions before proposing fixes"},
+    {"id": "test-driven-development", "name": "Test-Driven Development", "category": "Code Quality", "desc": "Strict red-green-refactor testing before writing implementation code"},
+    {"id": "executing-plans", "name": "Executing Plans", "category": "Workflows", "desc": "Executes implementation plans with checkpoints and verification loops"},
+    {"id": "brainstorming", "name": "Brainstorming & Design", "category": "Architecture", "desc": "Explores user intent, requirements, tradeoffs and design before coding"},
+    {"id": "codebase-design", "name": "Deep Codebase Design", "category": "Architecture", "desc": "Shared vocabulary for deep module interfaces, seams, and AI readability"},
+    {"id": "subagent-driven-development", "name": "Subagent Driven Dev", "category": "Multi-Agent", "desc": "Dispatches independent task subagents with scoped workspaces"},
+    {"id": "caveman", "name": "Caveman Mode", "category": "Efficiency", "desc": "Terse prose, full technical substance, token compressor"},
+    {"id": "ponytail", "name": "Ponytail Discipline", "category": "Efficiency", "desc": "Reuse first, write only what must exist, YAGNI minimalism"},
+    {"id": "humanizer", "name": "AI Text Humanizer", "category": "Writing", "desc": "Rewrites AI-sounding prose removing Wikipedia signs of AI writing"},
+    {"id": "grilling", "name": "Grilling Stress-Tester", "category": "Strategy", "desc": "Relentlessly challenges plans, assumptions, and design decisions"},
+    {"id": "frontend-developer", "name": "Frontend Developer", "category": "Frontend", "desc": "Modern React 19, Next.js 15, responsive layouts, and state management"},
+    {"id": "design-taste-frontend", "name": "Design Taste Frontend", "category": "Frontend", "desc": "Anti-slop aesthetics for portfolios, landing pages, and web applications"},
+    {"id": "minimalist-ui", "name": "Minimalist UI", "category": "Frontend", "desc": "Warm monochrome palette, typographic contrast, flat bento grids"},
+    {"id": "high-end-visual-design", "name": "High-End Visual Design", "category": "Frontend", "desc": "Agency-grade fonts, spacing, shadows, depth, and micro-interactions"},
+    {"id": "redesign-existing-projects", "name": "Redesign Projects", "category": "Frontend", "desc": "Audits generic UI patterns and elevates design without breaking code"},
+    {"id": "backend-architect", "name": "Backend Architect", "category": "Backend", "desc": "Scalable microservices, REST/GraphQL/gRPC, and distributed resilience"},
+    {"id": "backend-security-coder", "name": "Backend Security Coder", "category": "Security", "desc": "Input sanitization, authentication, CSRF/XSS, and secrets management"},
+    {"id": "frontend-security-coder", "name": "Frontend Security Coder", "category": "Security", "desc": "Client-side XSS defense, CSP headers, and secure token storage"},
+    {"id": "api-design-principles", "name": "API Design Principles", "category": "Backend", "desc": "REST and GraphQL enterprise API contracts and versioning"},
+    {"id": "openapi-spec-generation", "name": "OpenAPI Spec Generation", "category": "Backend", "desc": "Author, validate, and maintain OpenAPI 3.1 specifications"},
+    {"id": "fastapi-pro", "name": "FastAPI Pro", "category": "Python", "desc": "High-performance async APIs with FastAPI, Pydantic, and SQLAlchemy"},
+    {"id": "python-pro", "name": "Python Pro", "category": "Python", "desc": "Modern Python 3.12+ with type hints, dataclasses, and modern tooling"},
+    {"id": "python-testing-patterns", "name": "Python Testing Patterns", "category": "Python", "desc": "Comprehensive pytest strategies, fixtures, parameterization, and mocks"},
+    {"id": "python-performance-optimization", "name": "Python Optimization", "category": "Python", "desc": "tracemalloc profiling, CPU bottlenecks, and hot loop optimizations"},
+    {"id": "async-python-patterns", "name": "Async Python Patterns", "category": "Python", "desc": "Master asyncio event loops, concurrent execution, and async pipelines"},
+    {"id": "uv-package-manager", "name": "uv Package Manager", "category": "Python", "desc": "Lightning-fast Python package resolution, workspaces, and lockfiles"},
+    {"id": "golang-pro", "name": "Golang Pro", "category": "Go", "desc": "Go 1.21+ modern idioms, generics, microservices, and network services"},
+    {"id": "go-concurrency-patterns", "name": "Go Concurrency Patterns", "category": "Go", "desc": "Goroutines, channels, worker pools, sync primitives, and race prevention"},
+    {"id": "rust-pro", "name": "Rust Pro", "category": "Rust", "desc": "Modern Rust systems programming, borrow checker, and performance tuning"},
+    {"id": "rust-async-patterns", "name": "Rust Async Patterns", "category": "Rust", "desc": "Tokio runtime, async tasks, channels, and cooperative multitasking"},
+    {"id": "typescript-pro", "name": "TypeScript Pro", "category": "TypeScript", "desc": "Enterprise TypeScript, strict compiler configs, and architecture patterns"},
+    {"id": "typescript-advanced-types", "name": "TS Advanced Types", "category": "TypeScript", "desc": "Conditional types, mapped types, template literals, and type guards"},
+    {"id": "javascript-pro", "name": "JavaScript Pro", "category": "JavaScript", "desc": "Modern ES2024+, event loops, modules, and browser runtime APIs"},
+    {"id": "nextjs-app-router-patterns", "name": "Next.js App Router", "category": "Full-Stack", "desc": "Next.js Server Components (RSC), Server Actions, and streaming"},
+    {"id": "playwright", "name": "Playwright Automation", "category": "Testing", "desc": "Browser automation, end-to-end testing, and web scraping workflows"},
+    {"id": "chrome-devtools", "name": "Chrome DevTools", "category": "Debugging", "desc": "Chrome DevTools MCP for debugging, troubleshooting, and network inspection"},
+    {"id": "a11y-debugging", "name": "Accessibility (a11y)", "category": "Quality", "desc": "Accessibility auditing: ARIA labels, focus states, contrast, keyboard nav"},
+    {"id": "git-guardrails-claude-code", "name": "Git Safety Guardrails", "category": "DevOps", "desc": "Hooks to block dangerous git operations (reset --hard, push, clean)"},
+    {"id": "n8n-automation", "name": "n8n Workflow Automation", "category": "Automation", "desc": "Design, build, and debug n8n workflow automations and AI bridges"},
+    {"id": "research", "name": "Deep Research Synthesizer", "category": "Research", "desc": "Investigate primary sources and capture findings as repository Markdown"}
+]
+
+def _resolve_agent_def(agent_or_id):
+    if isinstance(agent_or_id, dict):
+        return agent_or_id
+    if isinstance(agent_or_id, str):
+        for ag in list(AGENT_CATALOG) + get_custom_agents():
+            if ag.get("id") == agent_or_id:
+                return ag
+        return {"id": agent_or_id, "name": agent_or_id, "detect_type": "cli", "cli_name": agent_or_id}
+    return {}
+
+def detect_agent_status(agent_def):
+    agent_def = _resolve_agent_def(agent_def)
+    aid = agent_def.get("id", "")
+    active = discover_installed_agents()
+    if aid in active:
+        return True, "Active in Fleet"
+    
+    dtype = agent_def.get("detect_type", "cli")
+    if dtype == "cli":
+        c = agent_def.get("cli_name")
+        p = find_cli_executable(c) if c else None
+        if p:
+            return True, f"CLI: {os.path.basename(p)}"
+    elif dtype == "vscode_ext":
+        ext_id = agent_def.get("ext_id", "").lower()
+        ext_dir = os.path.join(USERPROFILE, ".vscode", "extensions")
+        if os.path.exists(ext_dir):
+            try:
+                for f in os.listdir(ext_dir):
+                    if f.lower().startswith(ext_id):
+                        return True, "VS Code Extension"
+            except Exception:
+                pass
+    elif dtype == "app":
+        c = agent_def.get("cli_name")
+        p = find_cli_executable(c) if c else None
+        if p:
+            return True, f"Binary: {os.path.basename(p)}"
+        for ap in agent_def.get("app_paths", []):
+            if ap and os.path.exists(ap):
+                return True, "Desktop Application"
+
+    return False, "Not Installed"
+
+def install_agent_package(agent_def):
+    agent_def = _resolve_agent_def(agent_def)
+    cmd = agent_def.get("install_cmd")
+    if not cmd:
+        return False, "No installation command defined"
+    try:
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+        aid = agent_def.get("id")
+        if res.returncode == 0:
+            enable_agent(aid)
+            return True, f"Successfully installed {agent_def.get('name', aid)}!"
+        return False, f"Install failed (code {res.returncode}): {res.stderr[:200] or res.stdout[:200]}"
+    except Exception as e:
+        return False, f"Install error: {e}"
+
+def uninstall_agent_package(agent_def, purge_files=True):
+    agent_def = _resolve_agent_def(agent_def)
+    aid = agent_def.get("id")
+    cmd = agent_def.get("uninstall_cmd")
+    if cmd:
+        try:
+            subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+        except Exception:
+            pass
+    return disable_agent(aid, purge_files=purge_files)
+
+def verify_agent_doctor(agent_def):
+    agent_def = _resolve_agent_def(agent_def)
+    installed, det = detect_agent_status(agent_def)
+    report = [f"Agent: {agent_def.get('name', agent_def.get('id'))} ({agent_def.get('id')})", f"Status: {'INSTALLED (' + det + ')' if installed else 'NOT INSTALLED'}"]
+    c = agent_def.get("cli_name")
+    if c:
+        p = find_cli_executable(c)
+        report.append(f"Executable: {p or 'Not found in PATH'}")
+        if p:
+            try:
+                out = subprocess.check_output(f"{c} --version", shell=True, text=True, timeout=5, stderr=subprocess.STDOUT).strip()
+                report.append(f"Version: {out.splitlines()[0] if out else 'Unknown'}")
+            except Exception:
+                report.append("Version: Unable to query --version")
+    if agent_def.get("docs"):
+        report.append(f"Docs: {agent_def['docs']}")
+    return installed, "\n".join(report)
+
+def is_skill_installed(skill_id, agent_cfg=None):
+    if agent_cfg:
+        s_dir = agent_cfg.get("skills_dir")
+        if not s_dir or not os.path.exists(s_dir): return False
+        return os.path.isdir(os.path.join(s_dir, skill_id))
+    active = discover_installed_agents()
+    for ag in active.values():
+        s_dir = ag.get("skills_dir")
+        if s_dir and os.path.isdir(os.path.join(s_dir, skill_id)):
+            return True
+    return False
+
+def install_curated_skill(skill_def, agent_cfg, all_agents=None, broadcast=False):
+    sid = skill_def["id"]
+    sname = skill_def["name"]
+    targets = list(all_agents.values()) if (broadcast and all_agents) else [agent_cfg]
+    
+    source_dir = None
+    search_dirs = [
+        os.path.join(USERPROFILE, ".gemini", "config", "skills", sid),
+        os.path.join(USERPROFILE, ".claude", "skills", sid),
+        os.path.join(AI_PROJECTS, "github projects", "skills", "claude-skills", sid),
+    ]
+    for wh_name, wh_path in WAREHOUSES:
+        search_dirs.append(os.path.join(wh_path, sid))
+        search_dirs.append(os.path.join(wh_path, "skills", sid))
+
+    for sd in search_dirs:
+        if os.path.isdir(sd) and os.path.exists(os.path.join(sd, "SKILL.md")):
+            source_dir = sd
+            break
+
+    installed_count = 0
+    for ag in targets:
+        dst_dir = ag.get("skills_dir")
+        if not dst_dir: continue
+        os.makedirs(dst_dir, exist_ok=True)
+        dest_folder = os.path.join(dst_dir, sid)
+        
+        if source_dir:
+            if os.path.exists(dest_folder): shutil.rmtree(dest_folder)
+            shutil.copytree(source_dir, dest_folder)
+            installed_count += 1
+        else:
+            os.makedirs(dest_folder, exist_ok=True)
+            skill_md = os.path.join(dest_folder, "SKILL.md")
+            desc_txt = skill_def.get('desc', 'Curated engineering workflow.')
+            content = f"""---
+name: {sid}
+description: {desc_txt}
+---
+
+# {sname}
+
+## Overview
+{desc_txt}
+
+## Category
+{skill_def.get('category', 'General')}
+
+## Procedures
+- Follow systematic engineering guidelines.
+- Execute validation and verification steps before completion.
+"""
+            with open(skill_md, "w", encoding="utf-8") as f:
+                f.write(content)
+            installed_count += 1
+
+    return True, f"Installed skill '{sid}' to {installed_count} agent(s)!"
+
+def search_github_skills(query, limit=12):
+    if not query or not query.strip():
+        query = "claude-skills"
+    q_str = urllib.parse.quote_plus(f"{query.strip()} in:name,description,topics")
+    api_url = f"https://api.github.com/search/repositories?q={q_str}&sort=stars&order=desc&per_page={limit}"
+    headers = {
+        "User-Agent": "OmniAgentManager/2.0",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    results = []
+    try:
+        if HAS_HTTPX:
+            resp = httpx.get(api_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+            else:
+                data = {}
+        else:
+            req = urllib.request.Request(api_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        for item in data.get("items", []):
+            results.append({
+                "name": item.get("name", "skill-repo"),
+                "full_name": item.get("full_name", ""),
+                "clone_url": item.get("clone_url", ""),
+                "desc": item.get("description") or "No description provided",
+                "stars": item.get("stargazers_count", 0)
+            })
+    except Exception:
+        pass
+    return results
+
+def import_custom_github_repo(repo_url, target_agent, all_agents=None, broadcast=False):
+    if not repo_url or not repo_url.strip():
+        return False, "Empty repository URL"
+    repo_url = repo_url.strip()
+    repo_name = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+    temp_dir = os.path.join(USERPROFILE, ".omni_temp_clone", repo_name)
+    if os.path.exists(temp_dir):
+        try: shutil.rmtree(temp_dir)
+        except Exception: pass
+    os.makedirs(os.path.dirname(temp_dir), exist_ok=True)
+    
+    try:
+        res = subprocess.run(["git", "clone", "--depth", "1", repo_url, temp_dir], capture_output=True, text=True, timeout=45)
+        if res.returncode != 0:
+            return False, f"Git clone failed: {res.stderr[:200]}"
+    except Exception as e:
+        return False, f"Clone error: {e}"
+
+    found_skills = []
+    for root, dirs, files in os.walk(temp_dir):
+        if "SKILL.md" in files or "skill.md" in files:
+            found_skills.append(root)
+
+    targets = list(all_agents.values()) if (broadcast and all_agents) else [target_agent]
+    if not found_skills:
+        dst_sname = repo_name
+        for ag in targets:
+            dst_dir = ag.get("skills_dir")
+            if not dst_dir: continue
+            os.makedirs(dst_dir, exist_ok=True)
+            dest_folder = os.path.join(dst_dir, dst_sname)
+            if os.path.exists(dest_folder): shutil.rmtree(dest_folder)
+            shutil.copytree(temp_dir, dest_folder, ignore=shutil.ignore_patterns(".git"))
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return True, f"Imported '{repo_name}' repository as skill to {len(targets)} agent(s)!"
+
+    imported_names = []
+    for sk_path in found_skills:
+        s_name = os.path.basename(sk_path)
+        if s_name in (".", "", repo_name) and len(found_skills) == 1:
+            s_name = repo_name
+        for ag in targets:
+            dst_dir = ag.get("skills_dir")
+            if not dst_dir: continue
+            os.makedirs(dst_dir, exist_ok=True)
+            dest_folder = os.path.join(dst_dir, s_name)
+            if os.path.exists(dest_folder): shutil.rmtree(dest_folder)
+            shutil.copytree(sk_path, dest_folder)
+        imported_names.append(s_name)
+
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    return True, f"Discovered and imported {len(imported_names)} skill(s) to {len(targets)} agent(s)!"
+
 # ================= MASTER SKILLS WAREHOUSES =================
 
 def discover_warehouses():
@@ -1113,6 +1618,84 @@ def test_ping_endpoint(url, timeout=2.5):
         except Exception:
             continue
     return False, "Offline / Unreachable (Timeout)"
+
+def fetch_models_from_endpoint(base_url, api_key=None, timeout=5.0):
+    """
+    Dynamically queries an AI model endpoint (/v1/models, /models, or Ollama /api/tags),
+    retrieves available models, and returns a sorted list of model ID strings.
+    """
+    if not base_url:
+        return []
+    if not base_url.startswith("http://") and not base_url.startswith("https://"):
+        base_url = "http://" + base_url
+
+    norm_base = base_url.rstrip("/")
+    headers = {'User-Agent': 'UniversalAgentCustomizer/1.0', 'Accept': 'application/json'}
+    if api_key and api_key.strip():
+        headers['Authorization'] = f"Bearer {api_key.strip()}"
+
+    candidates = []
+    if norm_base.endswith("/v1"):
+        candidates.append(f"{norm_base}/models")
+        root = norm_base[:-3]
+        candidates.append(f"{root}/api/tags")
+        candidates.append(f"{root}/models")
+    else:
+        candidates.append(f"{norm_base}/v1/models")
+        candidates.append(f"{norm_base}/models")
+        candidates.append(f"{norm_base}/api/tags")
+
+    found_models = []
+    for target in candidates:
+        try:
+            if HAS_HTTPX:
+                resp = httpx.get(target, headers=headers, timeout=timeout)
+                if resp.status_code == 200:
+                    data = resp.json()
+                else:
+                    continue
+            else:
+                req = urllib.request.Request(target, headers=headers)
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    if r.status == 200:
+                        data = json.loads(r.read().decode('utf-8'))
+                    else:
+                        continue
+            
+            if isinstance(data, dict):
+                if "data" in data and isinstance(data["data"], list):
+                    for item in data["data"]:
+                        if isinstance(item, dict) and "id" in item:
+                            found_models.append(str(item["id"]))
+                        elif isinstance(item, str):
+                            found_models.append(item)
+                elif "models" in data and isinstance(data["models"], list):
+                    for item in data["models"]:
+                        if isinstance(item, dict):
+                            name = item.get("name") or item.get("model") or item.get("id")
+                            if name: found_models.append(str(name))
+                        elif isinstance(item, str):
+                            found_models.append(item)
+            elif isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        m_id = item.get("id") or item.get("name")
+                        if m_id: found_models.append(str(m_id))
+                    elif isinstance(item, str):
+                        found_models.append(item)
+
+            if found_models:
+                break
+        except Exception:
+            continue
+
+    seen = set()
+    cleaned = []
+    for m in found_models:
+        if m and m not in seen:
+            seen.add(m)
+            cleaned.append(m)
+    return cleaned
 
 PROVIDER_PRESETS = {
     "ollama": {
@@ -2134,18 +2717,49 @@ def add_provider_interactive(agent_cfg):
         if key_in is None: return
         api_key = key_in.strip()
 
-    models_in = safe_input(f"Models to add (comma-separated, default: {','.join(p['default_models'][:3])}): ")
-    if models_in is None: return
-    models_input = models_in.strip()
-    if models_input:
-        models_list = [m.strip() for m in models_input.split(",") if m.strip()]
-    else:
-        models_list = p["default_models"]
-
     print(f"\n{CLR_YELLOW}Verifying endpoint...{CLR_RESET}")
     is_live, msg = test_ping_endpoint(base_url)
     clr = CLR_GREEN if is_live else CLR_RED
     print(f"Endpoint status: {clr}{msg}{CLR_RESET}\n")
+
+    models_list = []
+    fetch_opt = safe_input("Query endpoint to fetch available models automatically? [Y/n]: ")
+    if fetch_opt is not None and fetch_opt.strip().lower() != 'n':
+        print(f"{CLR_YELLOW}Fetching models from {base_url}...{CLR_RESET}")
+        fetched = fetch_models_from_endpoint(base_url, api_key=api_key)
+        if fetched:
+            print(f"\n{CLR_GREEN}Found {len(fetched)} models on endpoint:{CLR_RESET}")
+            for idx, m in enumerate(fetched[:20], 1):
+                print(f"  [{idx}] {m}")
+            if len(fetched) > 20:
+                print(f"  ... and {len(fetched) - 20} more")
+            sel_in = safe_input(f"\nEnter model numbers to add (comma-separated, e.g. 1,2,3 or 'all', default: 1): ")
+            if sel_in and sel_in.strip().lower() == 'all':
+                models_list = fetched
+            elif sel_in and sel_in.strip():
+                picked = []
+                for part in sel_in.split(","):
+                    try:
+                        p_idx = int(part.strip()) - 1
+                        if 0 <= p_idx < len(fetched):
+                            picked.append(fetched[p_idx])
+                    except Exception:
+                        pass
+                if picked:
+                    models_list = picked
+            elif fetched:
+                models_list = [fetched[0]]
+        else:
+            print(f"{CLR_YELLOW}No models returned from endpoint query (or endpoint requires different auth).{CLR_RESET}")
+
+    if not models_list:
+        models_in = safe_input(f"Models to add (comma-separated, default: {','.join(p['default_models'][:3])}): ")
+        if models_in is None: return
+        models_input = models_in.strip()
+        if models_input:
+            models_list = [m.strip() for m in models_input.split(",") if m.strip()]
+        else:
+            models_list = p["default_models"]
 
     ok = add_agent_provider(agent_cfg, prov_id, prov_name, base_url, api_key=api_key, models_list=models_list)
     if ok:
@@ -2386,11 +3000,12 @@ def run_checklist(title, all_items, selected_set, details=None, agent_name="", a
 def add_skills_interactive(agent_cfg=None, all_agents=None):
     """
     Rich interactive menu to add skills via:
-    1. Master Warehouses (D: drive repos)
-    2. Local Directory Path
-    3. Git / GitHub clone
-    4. NPX / CLI command
-    5. Scaffold New Skill Template
+    1. Top 40 Curated Skills Store (1-Click Install)
+    2. Master Warehouses (1,350+ Skills on D: drive)
+    3. Search GitHub Online Skills (Live API Search & 1-Click Install)
+    4. Install Skill from Custom Git / GitHub Repository URL
+    5. Import Skill from Local Folder / Directory Path
+    6. Scaffold New Custom Skill Template
     """
     init_screen()
     target_name = agent_cfg["name"] if agent_cfg else "ALL INSTALLED AGENTS"
@@ -2398,14 +3013,15 @@ def add_skills_interactive(agent_cfg=None, all_agents=None):
     print(f"                      ADD NEW SKILLS TO: {target_name.upper()}                  ")
     print(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
     print("Select Method to Add Skills:")
-    print("  [1] Browse & Import from Master Warehouses (1,350+ Skills on D: drive)")
-    print("  [2] Import Skill from Local Folder / Directory Path")
-    print("  [3] Install Skill from Git / GitHub Repository URL")
-    print("  [4] Install Skill via CLI Command (e.g. npx skills add)")
-    print("  [5] Scaffold New Custom Skill Template (Interactive Generator)")
+    print("  [1] Top 40 Curated Skills Store (1-Click Install to Agent or Fleet)")
+    print("  [2] Browse & Import from Master Warehouses (1,350+ Skills on D: drive)")
+    print("  [3] Search GitHub Online Skills (Live API Search & 1-Click Install)")
+    print("  [4] Install Skill from Custom Git / GitHub Repository URL")
+    print("  [5] Import Skill from Local Folder / Directory Path")
+    print("  [6] Scaffold New Custom Skill Template (Interactive Generator)")
     print("  [0] Cancel / Back")
     print("--------------------------------------------------------------------------------")
-    choice = safe_input("Enter option [1-5/0]: ")
+    choice = safe_input("Enter option [1-6/0]: ")
     if choice is None or not choice.strip() or choice.strip() == "0":
         return
     choice = choice.strip()
@@ -2419,8 +3035,78 @@ def add_skills_interactive(agent_cfg=None, all_agents=None):
                 dest_dirs.append(a["skills_dir"])
 
     if choice == "1":
-        browse_warehouse_import(target_agent_cfg=agent_cfg)
+        init_screen()
+        print(f"{CLR_BOLD}{CLR_CYAN}=== TOP 40 CURATED SKILLS STORE ==={CLR_RESET}\n")
+        print(f"{CLR_BOLD}{'#':<4} {'Status':<14} {'Category':<16} {'Skill Name':<28} {'Description'}{CLR_RESET}")
+        print("--------------------------------------------------------------------------------")
+        for idx, sk in enumerate(REGISTRY_SKILLS, 1):
+            inst = is_skill_installed(sk["id"], agent_cfg) if agent_cfg else False
+            st = f"{CLR_GREEN}[Installed]{CLR_RESET}" if inst else f"{CLR_DIM}[Available]{CLR_RESET}"
+            print(f"[{idx:>2}] {st:<23} {CLR_CYAN}{sk['category'][:14]:<14}{CLR_RESET} {CLR_WHITE}{sk['name'][:26]:<26}{CLR_RESET} {CLR_DIM}{sk['desc'][:24]}{CLR_RESET}")
+        print("--------------------------------------------------------------------------------")
+        sel = safe_input("\nEnter skill number to install (or 'all', 0 to cancel): ")
+        if sel and sel.strip() != "0":
+            b_in = safe_input("Broadcast install to ALL installed agents? [y/N]: ")
+            broadcast = (b_in and b_in.strip().lower() == 'y')
+            if sel.strip().lower() == "all":
+                cnt = 0
+                for sk in REGISTRY_SKILLS:
+                    ok, _ = install_curated_skill(sk, agent_cfg, all_agents=all_agents, broadcast=broadcast)
+                    if ok: cnt += 1
+                print(f"\n{CLR_GREEN}✓ Installed all {cnt} curated skills!{CLR_RESET}")
+            else:
+                try:
+                    s_idx = int(sel.strip()) - 1
+                    if 0 <= s_idx < len(REGISTRY_SKILLS):
+                        sk = REGISTRY_SKILLS[s_idx]
+                        ok, msg = install_curated_skill(sk, agent_cfg, all_agents=all_agents, broadcast=broadcast)
+                        print(f"\n{CLR_GREEN}✓ {msg}{CLR_RESET}")
+                except Exception:
+                    pass
+        safe_input("\nPress [Enter] to continue...")
     elif choice == "2":
+        browse_warehouse_import(target_agent_cfg=agent_cfg)
+    elif choice == "3":
+        init_screen()
+        print(f"{CLR_BOLD}{CLR_CYAN}=== SEARCH GITHUB ONLINE SKILLS ==={CLR_RESET}\n")
+        q = safe_input("Enter search query (e.g. 'claude-skills', 'playwright', 'testing'): ")
+        if q and q.strip():
+            print(f"\n{CLR_YELLOW}Querying GitHub API...{CLR_RESET}")
+            repos = search_github_skills(q.strip(), limit=15)
+            if repos:
+                print(f"\n{CLR_BOLD}{'#':<4} {'Stars':<8} {'Repository':<32} {'Description'}{CLR_RESET}")
+                print("--------------------------------------------------------------------------------")
+                for idx, r in enumerate(repos, 1):
+                    print(f"[{idx:>2}] ⭐ {r['stars']:<5} {CLR_CYAN}{r['full_name'][:30]:<30}{CLR_RESET} {CLR_DIM}{r['desc'][:36]}{CLR_RESET}")
+                print("--------------------------------------------------------------------------------")
+                sel = safe_input("\nEnter repository number to clone & install skills (0 to cancel): ")
+                if sel and sel.strip() != "0":
+                    try:
+                        r_idx = int(sel.strip()) - 1
+                        if 0 <= r_idx < len(repos):
+                            chosen = repos[r_idx]
+                            b_in = safe_input("Broadcast install to ALL agents? [y/N]: ")
+                            broadcast = (b_in and b_in.strip().lower() == 'y')
+                            print(f"\n{CLR_YELLOW}Cloning and extracting skills from {chosen['clone_url']}...{CLR_RESET}")
+                            ok, msg = import_custom_github_repo(chosen['clone_url'], agent_cfg, all_agents=all_agents, broadcast=broadcast)
+                            clr = CLR_GREEN if ok else CLR_RED
+                            print(f"{clr}{msg}{CLR_RESET}")
+                    except Exception:
+                        pass
+            else:
+                print(f"\n{CLR_RED}No repositories found or GitHub API limit reached.{CLR_RESET}")
+        safe_input("\nPress [Enter] to continue...")
+    elif choice == "4":
+        git_url = safe_input("\nEnter Git / GitHub URL (e.g. https://github.com/user/repo): ")
+        if git_url and git_url.strip():
+            b_in = safe_input("Broadcast install to ALL agents? [y/N]: ")
+            broadcast = (b_in and b_in.strip().lower() == 'y')
+            print(f"\n{CLR_YELLOW}Cloning and extracting skills...{CLR_RESET}")
+            ok, msg = import_custom_github_repo(git_url.strip(), agent_cfg, all_agents=all_agents, broadcast=broadcast)
+            clr = CLR_GREEN if ok else CLR_RED
+            print(f"{clr}{msg}{CLR_RESET}")
+        safe_input("\nPress [Enter] to continue...")
+    elif choice == "5":
         path_in = safe_input("\nEnter full path to skill directory: ")
         if path_in is None or not path_in.strip(): return
         path_in = path_in.strip().strip('"')
@@ -2435,27 +3121,7 @@ def add_skills_interactive(agent_cfg=None, all_agents=None):
         else:
             print(f"\n{CLR_RED}Path does not exist:{CLR_RESET} {path_in}")
         safe_input("Press [Enter] to continue...")
-    elif choice == "3":
-        git_url = safe_input("\nEnter Git / GitHub URL (e.g. https://github.com/user/repo): ")
-        if git_url and git_url.strip():
-            git_url = git_url.strip()
-            sname_in = safe_input("Enter skill folder name: ")
-            if sname_in is None: return
-            sname = sname_in.strip() or git_url.split("/")[-1].replace(".git", "")
-            for d in dest_dirs:
-                os.makedirs(d, exist_ok=True)
-                dst = os.path.join(d, sname)
-                if os.path.exists(dst): shutil.rmtree(dst)
-                print(f"Cloning into {dst}...")
-                subprocess.run(["git", "clone", "--depth", "1", git_url, dst])
-            print(f"\n{CLR_GREEN}[SUCCESS] Cloned skill '{sname}'!{CLR_RESET}")
-        safe_input("Press [Enter] to continue...")
-    elif choice == "4":
-        cmd_run = safe_input("\nEnter installation command: ")
-        if cmd_run and cmd_run.strip():
-            subprocess.run(cmd_run.strip(), shell=True)
-        safe_input("Press [Enter] to continue...")
-    elif choice == "5":
+    elif choice == "6":
         sname_in = safe_input("\nEnter new skill name (e.g. 'my-api-tool'): ")
         if sname_in is None or not sname_in.strip(): return
         sname = sname_in.strip().lower().replace(" ", "-")
@@ -2488,10 +3154,11 @@ Describe what this skill accomplishes.
 def add_mcp_interactive(agent_cfg=None, all_agents=None):
     """
     Rich interactive menu to add MCP servers via:
-    1. Raw JSON code block / snippet
-    2. Interactive step-by-step Wizard
-    3. Clone MCP server from another installed agent
-    4. Broadcast / Add to ALL agents
+    1. Top 28 Curated MCP Server Registry (1-Click Install)
+    2. Install Custom NPX / UVX / Python MCP Package
+    3. Raw JSON MCP Configuration Snippet
+    4. Step-by-step Interactive MCP Wizard
+    5. Clone from another Agent
     """
     init_screen()
     target_name = agent_cfg["name"] if agent_cfg else "ALL INSTALLED AGENTS"
@@ -2499,12 +3166,14 @@ def add_mcp_interactive(agent_cfg=None, all_agents=None):
     print(f"                      ADD MCP SERVER TO: {target_name.upper()}                  ")
     print(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
     print("Select Method:")
-    print("  [1] Paste Raw JSON MCP Configuration Snippet")
-    print("  [2] Interactive Step-by-Step MCP Wizard (Stdio / SSE)")
-    print("  [3] Clone MCP Server from another Agent (Antigravity, Claude, Cursor, Hermes)")
+    print("  [1] Top 28 Curated MCP Server Registry (1-Click Install to Agent or Fleet)")
+    print("  [2] Install Custom NPX / UVX / Python MCP Package")
+    print("  [3] Paste Raw JSON MCP Configuration Snippet")
+    print("  [4] Interactive Step-by-Step MCP Wizard (Stdio / SSE)")
+    print("  [5] Clone MCP Server from another Agent")
     print("  [0] Cancel / Back")
     print("--------------------------------------------------------------------------------")
-    choice = safe_input("Enter option [1-3/0]: ")
+    choice = safe_input("Enter option [1-5/0]: ")
     if choice is None or not choice.strip() or choice.strip() == "0":
         return
     choice = choice.strip()
@@ -2517,6 +3186,64 @@ def add_mcp_interactive(agent_cfg=None, all_agents=None):
             if a.get("mcp_file"): target_configs.append(a)
 
     if choice == "1":
+        init_screen()
+        print(f"{CLR_BOLD}{CLR_CYAN}=== TOP 28 CURATED MCP SERVER REGISTRY ==={CLR_RESET}\n")
+        print(f"{CLR_BOLD}{'#':<4} {'Status':<14} {'Category':<16} {'Server Name':<24} {'Command'}{CLR_RESET}")
+        print("--------------------------------------------------------------------------------")
+        for idx, item in enumerate(REGISTRY_MCPS, 1):
+            inst = is_mcp_installed(item["id"], agent_cfg) if agent_cfg else False
+            st = f"{CLR_GREEN}[Active]{CLR_RESET}" if inst else f"{CLR_DIM}[Available]{CLR_RESET}"
+            cmd_str = f"{item['command']} {' '.join(item['args'][:2])}"
+            print(f"[{idx:>2}] {st:<23} {CLR_CYAN}{item['category'][:14]:<14}{CLR_RESET} {CLR_WHITE}{item['name'][:22]:<22}{CLR_RESET} {CLR_DIM}{cmd_str[:22]}{CLR_RESET}")
+        print("--------------------------------------------------------------------------------")
+        sel = safe_input("\nEnter MCP number to install (0 to cancel): ")
+        if sel and sel.strip() != "0":
+            try:
+                m_idx = int(sel.strip()) - 1
+                if 0 <= m_idx < len(REGISTRY_MCPS):
+                    mcp_def = REGISTRY_MCPS[m_idx]
+                    env_map = {}
+                    if mcp_def.get("env_vars"):
+                        for ev in mcp_def["env_vars"]:
+                            val = safe_input(f"Enter value for {ev} (leave blank for default): ")
+                            if val: env_map[ev] = val.strip()
+                    b_in = safe_input("Broadcast install to ALL installed agents? [y/N]: ")
+                    targets = list(all_agents.values()) if (b_in and b_in.strip().lower() == 'y' and all_agents) else [agent_cfg]
+                    ok, msg = install_registry_mcp(mcp_def, env_map, targets)
+                    clr = CLR_GREEN if ok else CLR_RED
+                    print(f"\n{clr}{msg}{CLR_RESET}")
+            except Exception:
+                pass
+        safe_input("\nPress [Enter] to continue...")
+    elif choice == "2":
+        init_screen()
+        print(f"{CLR_BOLD}{CLR_CYAN}=== INSTALL CUSTOM MCP PACKAGE ==={CLR_RESET}\n")
+        sid_in = safe_input("Server ID / Name (e.g. 'custom-mcp'): ")
+        if not sid_in: return
+        sid = sid_in.strip().lower().replace(" ", "-")
+        cmd_in = safe_input("Runner command ['npx' or 'uvx' or 'python'] (default: npx): ")
+        cmd = cmd_in.strip() if cmd_in else "npx"
+        pkg_in = safe_input("Package or script argument (e.g. '@org/mcp-server' or 'my-tool'): ")
+        if not pkg_in: return
+        args = ["-y", pkg_in.strip()] if cmd == "npx" else [pkg_in.strip()]
+        b_in = safe_input("Broadcast to ALL installed agents? [y/N]: ")
+        targets = list(all_agents.values()) if (b_in and b_in.strip().lower() == 'y' and all_agents) else [agent_cfg]
+        custom_mcp_def = {
+            "id": sid,
+            "name": sid_in.strip(),
+            "category": "Custom",
+            "desc": "Custom user MCP server",
+            "command": cmd,
+            "args": args,
+            "env_vars": [],
+            "docs": ""
+        }
+        ok, msg = install_registry_mcp(custom_mcp_def, {}, targets)
+        clr = CLR_GREEN if ok else CLR_RED
+        print(f"\n{clr}{msg}{CLR_RESET}")
+        safe_input("\nPress [Enter] to continue...")
+    elif choice == "3":
+
         init_screen()
         print(f"\n{CLR_CYAN}Paste your JSON MCP snippet below (End with an empty line or 'DONE'):{CLR_RESET}")
         print(CLR_DIM + 'Example: {"my-server": {"command": "npx", "args": ["-y", "my-package"]}}' + CLR_RESET)
@@ -3004,6 +3731,117 @@ def manage_single_agent(agent_cfg, all_agents):
 # ================= MASTER AGENT SELECTOR HUB =================
 
 
+
+def open_agent_store_cli():
+    """
+    Interactive Terminal CLI browser for Coding Agents Store.
+    Features: 1-Click Install, Safe Uninstall, Doctor Check, and Add Custom Agent.
+    """
+    cursor = 0
+    init_screen()
+    print(CLR_HIDE_CURSOR, end="", flush=True)
+
+    try:
+        while True:
+            catalog = list(AGENT_CATALOG) + get_custom_agents()
+            total = len(catalog)
+            cursor = 0 if total == 0 else max(0, min(cursor, total - 1))
+
+            lines = []
+            lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
+            lines.append(f"{CLR_BOLD}{CLR_CYAN}         CODING AGENTS ONLINE STORE & MANAGER (1-CLICK INSTALL/REMOVE)          {CLR_RESET}")
+            lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
+            lines.append(f"{CLR_WHITE}Install, update, or remove top CLI & GUI coding agents across your machine:{CLR_RESET}")
+            lines.append("--------------------------------------------------------------------------------")
+            lines.append(f"{CLR_BOLD}{'Status':<14} {'Agent Name':<28} {'Category':<18} {'Command / Details'}{CLR_RESET}")
+            lines.append("--------------------------------------------------------------------------------")
+
+            for i, ag in enumerate(catalog):
+                is_cur = (i == cursor)
+                inst, det = detect_agent_status(ag)
+                badge = f"{CLR_GREEN}[✔ Installed]{CLR_RESET}" if inst else f"{CLR_RED}[✗ Available]{CLR_RESET}"
+                ind = f"{CLR_CYAN}> {CLR_RESET}" if is_cur else "  "
+                
+                cmd_disp = ag.get("install_cmd", "")[:28]
+                if is_cur:
+                    lines.append(f"{ind}{badge:<23} {CLR_BOLD}{CLR_REVERSE} {ag['name'][:26]:<26} {CLR_RESET} {CLR_YELLOW}{ag['category'][:16]:<16}{CLR_RESET} {CLR_DIM}{cmd_disp}{CLR_RESET}")
+                else:
+                    lines.append(f"{ind}{badge:<23} {CLR_WHITE}{ag['name'][:26]:<26}{CLR_RESET} {CLR_DIM}{ag['category'][:16]:<16}{CLR_RESET} {CLR_DIM}{cmd_disp}{CLR_RESET}")
+
+            lines.append("--------------------------------------------------------------------------------")
+            cur_ag = catalog[cursor] if catalog else None
+            if cur_ag:
+                lines.append(f"{CLR_YELLOW}Selected:{CLR_RESET} {CLR_WHITE}{cur_ag['name']}{CLR_RESET} - {CLR_DIM}{cur_ag.get('desc', '')}{CLR_RESET}")
+                lines.append(f"{CLR_YELLOW}Install Cmd:{CLR_RESET} {CLR_CYAN}{cur_ag.get('install_cmd', 'None')}{CLR_RESET}")
+            lines.append("--------------------------------------------------------------------------------")
+            lines.append(f"{CLR_BOLD}Actions:{CLR_RESET} [Enter/i] 1-Click Install  [u] Uninstall/Purge  [d] Doctor  [+] Add Custom  [Esc/q] Back")
+            lines.append("================================================================================")
+
+            render_frame(lines)
+            key = read_key()
+            if key in ('UP', 'k'):
+                if cursor > 0: cursor -= 1
+            elif key in ('DOWN', 'j'):
+                if cursor < total - 1: cursor += 1
+            elif key in ('ENTER', 'i', 'I'):
+                if cur_ag:
+                    init_screen()
+                    print(f"\n{CLR_CYAN}Installing {cur_ag['name']}...{CLR_RESET}")
+                    print(f"Command: {CLR_YELLOW}{cur_ag.get('install_cmd')}{CLR_RESET}\n")
+                    ok, msg = install_agent_package(cur_ag)
+                    clr = CLR_GREEN if ok else CLR_RED
+                    print(f"{clr}{msg}{CLR_RESET}")
+                    safe_input("\nPress [Enter] to continue...")
+                    init_screen()
+            elif key in ('u', 'U'):
+                if cur_ag:
+                    init_screen()
+                    confirm = safe_input(f"Confirm removing/uninstalling {cur_ag['name']}? [y/N]: ")
+                    if confirm and confirm.strip().lower() == 'y':
+                        ok, msg = uninstall_agent_package(cur_ag, purge_files=True)
+                        print(f"\n{CLR_GREEN}✓ {msg}{CLR_RESET}")
+                    else:
+                        print(f"\n{CLR_YELLOW}Cancelled.{CLR_RESET}")
+                    safe_input("\nPress [Enter] to continue...")
+                    init_screen()
+            elif key in ('d', 'D'):
+                if cur_ag:
+                    init_screen()
+                    print(f"{CLR_BOLD}{CLR_CYAN}=== AGENT DOCTOR REPORT ==={CLR_RESET}\n")
+                    _, rpt = verify_agent_doctor(cur_ag)
+                    print(rpt)
+                    safe_input("\nPress [Enter] to continue...")
+                    init_screen()
+            elif key in ('+', 'a', 'A'):
+                init_screen()
+                print(f"{CLR_BOLD}{CLR_CYAN}=== ADD CUSTOM CODING AGENT ==={CLR_RESET}\n")
+                name_in = safe_input("Agent Name: ")
+                if not name_in: continue
+                cid = name_in.strip().lower().replace(" ", "-")
+                cli_in = safe_input("CLI Executable Name (e.g. 'myagent'): ")
+                cmd_in = safe_input("Install Command (e.g. 'npm install -g myagent' or 'pip install myagent'): ")
+                if not cmd_in: continue
+                custom_def = {
+                    "id": cid,
+                    "name": name_in.strip(),
+                    "category": "Custom Agent",
+                    "desc": "User-defined custom coding agent",
+                    "cli_name": cli_in.strip() if cli_in else cid,
+                    "detect_type": "cli",
+                    "install_cmd": cmd_in.strip(),
+                    "uninstall_cmd": "",
+                    "docs": ""
+                }
+                save_custom_agent(custom_def)
+                print(f"\n{CLR_GREEN}✓ Added custom agent '{name_in.strip()}'!{CLR_RESET}")
+                time.sleep(1.2)
+                init_screen()
+            elif key in ('ESC', 'q', '0'):
+                break
+    finally:
+        print(CLR_SHOW_CURSOR, end="", flush=True)
+
+
 def open_agent_folder_cli():
     keys = list(FOLDER_DATA.keys())
     cursor_idx = 0
@@ -3079,6 +3917,9 @@ def open_agent_folder_cli():
             elif k == 'c' and filter_text:
                 filter_text = ""
                 cursor_idx = 0
+            elif k in ('s', 'S'):
+                open_agent_store_cli()
+                init_screen()
             elif k.isdigit():
                 now = time.time()
                 if now - last_digit_time < 0.8:
@@ -3406,6 +4247,16 @@ REGISTRY_MCPS = [
         "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/github"
     },
     {
+        "id": "filesystem",
+        "name": "Secure Filesystem",
+        "category": "Core System",
+        "desc": "Direct file read/write access with directory allowlist security",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "${ALLOWED_DIR}"],
+        "env_vars": ["ALLOWED_DIR"],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem"
+    },
+    {
         "id": "postgres",
         "name": "PostgreSQL Database",
         "category": "Databases",
@@ -3436,14 +4287,54 @@ REGISTRY_MCPS = [
         "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search"
     },
     {
-        "id": "filesystem",
-        "name": "Secure Filesystem",
-        "category": "Core System",
-        "desc": "Direct file read/write access with directory allowlist security",
+        "id": "duckduckgo",
+        "name": "DuckDuckGo Web Search",
+        "category": "Web & Search",
+        "desc": "Privacy-focused web search and instant answers without API key",
+        "command": "uvx",
+        "args": ["duckduckgo-mcp-server"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers"
+    },
+    {
+        "id": "fetch",
+        "name": "Web Fetch & Scraper",
+        "category": "Web & Search",
+        "desc": "Fetch web pages and convert HTML to markdown for LLM consumption",
+        "command": "uvx",
+        "args": ["mcp-server-fetch"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch"
+    },
+    {
+        "id": "puppeteer",
+        "name": "Puppeteer Web Automation",
+        "category": "Browser Automation",
+        "desc": "Browser automation, web scraping, and JavaScript rendering via Puppeteer",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "${ALLOWED_DIR}"],
-        "env_vars": ["ALLOWED_DIR"],
-        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem"
+        "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer"
+    },
+    {
+        "id": "playwright",
+        "name": "Playwright Automation",
+        "category": "Browser Automation",
+        "desc": "End-to-end multi-tab browser automation, screenshots, and form filling",
+        "command": "npx",
+        "args": ["-y", "@executeautomation/playwright-mcp-server"],
+        "env_vars": [],
+        "docs": "https://github.com/executeautomation/playwright-mcp-server"
+    },
+    {
+        "id": "chrome-devtools",
+        "name": "Chrome DevTools Protocol",
+        "category": "Debugging",
+        "desc": "Direct Chrome DevTools connection for console, network, and DOM inspection",
+        "command": "npx",
+        "args": ["-y", "chrome-devtools-mcp"],
+        "env_vars": [],
+        "docs": "https://github.com/GoogleChrome/devtools-mcp"
     },
     {
         "id": "docker",
@@ -3466,26 +4357,6 @@ REGISTRY_MCPS = [
         "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory"
     },
     {
-        "id": "puppeteer",
-        "name": "Puppeteer Web Automation",
-        "category": "Browser Automation",
-        "desc": "Browser automation, web scraping, and JavaScript rendering via Puppeteer",
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
-        "env_vars": [],
-        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer"
-    },
-    {
-        "id": "fetch",
-        "name": "Web Fetch & Scraper",
-        "category": "Web & Search",
-        "desc": "Fetch web pages and convert HTML to markdown for LLM consumption",
-        "command": "uvx",
-        "args": ["mcp-server-fetch"],
-        "env_vars": [],
-        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch"
-    },
-    {
         "id": "sequential-thinking",
         "name": "Sequential Thinking Reasoning",
         "category": "Reasoning & Agentic",
@@ -3504,8 +4375,170 @@ REGISTRY_MCPS = [
         "args": ["-y", "@context-mode/mcp"],
         "env_vars": [],
         "docs": "https://github.com/context-mode"
+    },
+    {
+        "id": "git",
+        "name": "Git Repository Tools",
+        "category": "DevOps & SCM",
+        "desc": "Read git repositories, diffs, commits, branches, and staged files",
+        "command": "uvx",
+        "args": ["mcp-server-git"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/git"
+    },
+    {
+        "id": "slack",
+        "name": "Slack Integration",
+        "category": "Productivity",
+        "desc": "Channel browsing, messaging, thread reading, and reaction management",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-slack"],
+        "env_vars": ["SLACK_BOT_TOKEN"],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/slack"
+    },
+    {
+        "id": "google-drive",
+        "name": "Google Drive Explorer",
+        "category": "Storage & Docs",
+        "desc": "Search, read, and retrieve documents from Google Drive",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-gdrive"],
+        "env_vars": ["GDRIVE_CREDENTIALS"],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/gdrive"
+    },
+    {
+        "id": "s3",
+        "name": "AWS S3 Object Storage",
+        "category": "Cloud & Storage",
+        "desc": "Inspect S3 buckets, object metadata, and stream files",
+        "command": "uvx",
+        "args": ["mcp-server-s3"],
+        "env_vars": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/s3"
+    },
+    {
+        "id": "everything",
+        "name": "Windows Everything Search",
+        "category": "Core System",
+        "desc": "Instant filename and path searching across entire local Windows filesystem",
+        "command": "uvx",
+        "args": ["everything-mcp"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers"
+    },
+    {
+        "id": "context7",
+        "name": "Context7 Docs Resolver",
+        "category": "Developer Tools",
+        "desc": "Live documentation lookup and resolver for popular developer libraries",
+        "command": "npx",
+        "args": ["-y", "@upstash/context7-mcp"],
+        "env_vars": [],
+        "docs": "https://context7.ai"
+    },
+    {
+        "id": "exa",
+        "name": "Exa Neural Search",
+        "category": "Web & Search",
+        "desc": "Neural AI web search and web page text retrieval via Exa API",
+        "command": "npx",
+        "args": ["-y", "exa-mcp-server"],
+        "env_vars": ["EXA_API_KEY"],
+        "docs": "https://github.com/exa-labs/exa-mcp-server"
+    },
+    {
+        "id": "markdownify",
+        "name": "Markdownify Media Converter",
+        "category": "Data Processing",
+        "desc": "Convert documents, PDFs, audio, video, and websites to clean markdown",
+        "command": "npx",
+        "args": ["-y", "@markdownify/mcp"],
+        "env_vars": [],
+        "docs": "https://github.com/markdownify/mcp"
+    },
+    {
+        "id": "scrapling",
+        "name": "Scrapling Stealth Scraper",
+        "category": "Browser Automation",
+        "desc": "Undetected web fetcher and session scraper bypassing cloudflare and anti-bots",
+        "command": "uvx",
+        "args": ["scrapling-mcp"],
+        "env_vars": [],
+        "docs": "https://github.com/scrapling"
+    },
+    {
+        "id": "astryx",
+        "name": "Astryx Code Search",
+        "category": "Developer Tools",
+        "desc": "Semantic code search and code graph navigation across repositories",
+        "command": "npx",
+        "args": ["-y", "@astryx/mcp"],
+        "env_vars": [],
+        "docs": "https://astryx.ai"
+    },
+    {
+        "id": "wolfram",
+        "name": "Wolfram Alpha Engine",
+        "category": "Reasoning & Math",
+        "desc": "Computational intelligence, math solving, and real-time scientific data",
+        "command": "npx",
+        "args": ["-y", "wolfram-mcp"],
+        "env_vars": ["WOLFRAM_APP_ID"],
+        "docs": "https://wolframalpha.com"
+    },
+    {
+        "id": "world-monitor",
+        "name": "World Monitor Feeds",
+        "category": "Information",
+        "desc": "Real-time world news, market metrics, and live situational feeds",
+        "command": "npx",
+        "args": ["-y", "world-monitor-mcp"],
+        "env_vars": [],
+        "docs": "https://github.com/world-monitor"
+    },
+    {
+        "id": "deepwiki",
+        "name": "DeepWiki Reader",
+        "category": "Documentation",
+        "desc": "Local and remote wiki structure reader and technical documentation parser",
+        "command": "npx",
+        "args": ["-y", "deepwiki-mcp"],
+        "env_vars": [],
+        "docs": "https://deepwiki.org"
+    },
+    {
+        "id": "windows-cli",
+        "name": "Windows CLI Runner",
+        "category": "Core System",
+        "desc": "Safe execution runner for PowerShell and CMD commands with stdout capture",
+        "command": "uvx",
+        "args": ["windows-cli-mcp"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers"
     }
 ]
+
+def is_mcp_installed(mcp_id, agent_cfg=None):
+    """Checks if an MCP server ID is configured in the agent's MCP configuration."""
+    if agent_cfg:
+        mf = agent_cfg.get("mcp_file")
+        if not mf or not os.path.exists(mf): return False
+        try:
+            act, dis = read_mcp_config(agent_cfg)
+            return (mcp_id in act) or (mcp_id in dis)
+        except Exception:
+            return False
+    active = discover_installed_agents()
+    for ag in active.values():
+        mf = ag.get("mcp_file")
+        if mf and os.path.exists(mf):
+            try:
+                act, dis = read_mcp_config(ag)
+                if (mcp_id in act) or (mcp_id in dis):
+                    return True
+            except Exception:
+                pass
+    return False
 
 def apply_mcp_preset(agent_cfg, preset_id, all_agents=None, broadcast=False):
     preset = next((p for p in MCP_PRESETS if p["id"] == preset_id), None)
@@ -4512,13 +5545,27 @@ if HAS_TEXTUAL:
                 yield Input(placeholder="llama3.3", id="in-model", value="llama3.3")
                 with Horizontal(classes="btn-bar"):
                     yield Button("Save & Activate", id="btn-save", variant="success")
+                    yield Button("⚡ Fetch Models", id="btn-fetch-models", variant="warning")
                     yield Button("Test Ping", id="btn-test", variant="primary")
                     yield Button("Cancel", id="btn-cancel", variant="default")
+
+        def on_models_selected(self, chosen):
+            if chosen:
+                self.query_one("#in-model", Input).value = chosen
+                self.app.notify(f"Selected model: {chosen}", title="Model Selected")
 
         def on_button_pressed(self, event: Button.Pressed):
             bid = event.button.id
             if bid == "btn-cancel":
                 self.dismiss(False)
+            elif bid == "btn-fetch-models":
+                url = self.query_one("#in-url", Input).value.strip() or "http://localhost:11434/v1"
+                key = self.query_one("#in-key", Input).value.strip()
+                fetched = fetch_models_from_endpoint(url, api_key=key)
+                if fetched:
+                    self.app.push_screen(DesktopSelectFetchedModelsModal(fetched), callback=self.on_models_selected)
+                else:
+                    self.app.notify("No models returned. Verify endpoint URL & auth key.", title="Fetch Failed", severity="warning")
             elif bid == "btn-test":
                 url = self.query_one("#in-url", Input).value.strip() or "http://localhost:11434/v1"
                 self.app.push_screen(DesktopPingModal(url))
@@ -4716,6 +5763,7 @@ if HAS_TEXTUAL:
             ("preset:minimal", "🍱 Apply Preset: 🪶 Minimal / Lean (Filesystem only)", "preset"),
             ("preset:all_active", "🍱 Apply Preset: ✨ All Active (Enable All Configured)", "preset"),
             ("preset:broadcast", "⚡ 1-Click Broadcast Active Preset to ALL Agents", "preset_broadcast"),
+            ("tool:agent_store", "🏪 Open Coding Agents Online Store & Manager", "agent_store"),
             ("tool:uninstall_agent", "🗑️ Uninstall / Remove Active Agent from Fleet", "uninstall_agent"),
             ("tool:sidebar", "◀ Toggle Sidebar Show/Hide [Ctrl+B]", "sidebar"),
             ("tool:health", "⚡ Run Live Health Checks on Active MCP Servers", "health"),
@@ -4934,6 +5982,269 @@ if HAS_TEXTUAL:
                 event.stop()
                 self.dismiss(None)
 
+
+    class DesktopSelectFetchedModelsModal(ModalScreen):
+        CSS = """
+        DesktopSelectFetchedModelsModal {
+            align: center middle;
+        }
+        #sel-models-box {
+            width: 76;
+            height: 24;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #table-fetched-models {
+            height: 14;
+            margin-top: 1;
+            margin-bottom: 1;
+        }
+        .btn-bar {
+            height: 3;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+        BINDINGS = [
+            Binding("escape", "dismiss_modal", "Cancel", show=True),
+        ]
+
+        def __init__(self, models_list):
+            super().__init__()
+            self.models_list = models_list
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="sel-models-box"):
+                yield Label(f"[bold green]⚡ SELECT MODEL FROM ENDPOINT ({len(self.models_list)} FOUND)[/bold green]")
+                yield Label("[dim]Choose model to configure as active model for this provider:[/dim]")
+                yield DataTable(id="table-fetched-models")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("Select & Apply [Enter]", id="btn-apply-fetched", variant="success")
+                    yield Button("Cancel [Esc]", id="btn-cancel-fetched", variant="default")
+
+        def on_mount(self):
+            t = self.query_one("#table-fetched-models", DataTable)
+            t.clear(columns=True)
+            t.add_columns("#", "Model ID / Name")
+            t.cursor_type = "row"
+            for idx, m in enumerate(self.models_list, 1):
+                t.add_row(str(idx), m, key=f"fm-{idx-1}")
+
+        def action_dismiss_modal(self):
+            self.dismiss(None)
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-cancel-fetched":
+                self.dismiss(None)
+            elif bid == "btn-apply-fetched":
+                t = self.query_one("#table-fetched-models", DataTable)
+                if t.cursor_row is not None and 0 <= t.cursor_row < len(self.models_list):
+                    self.dismiss(self.models_list[t.cursor_row])
+                else:
+                    self.dismiss(None)
+
+        def on_data_table_row_selected(self, event: DataTable.RowSelected):
+            t = self.query_one("#table-fetched-models", DataTable)
+            if t.cursor_row is not None and 0 <= t.cursor_row < len(self.models_list):
+                self.dismiss(self.models_list[t.cursor_row])
+
+    class DesktopAddCustomAgentModal(ModalScreen):
+        CSS = """
+        DesktopAddCustomAgentModal {
+            align: center middle;
+        }
+        #custom-agent-box {
+            width: 70;
+            height: auto;
+            max-height: 85%;
+            background: $surface;
+            border: round $warning;
+            padding: 1 2;
+        }
+        .field-label {
+            color: $primary;
+            margin-top: 1;
+        }
+        .btn-bar {
+            margin-top: 1;
+            height: 3;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+        BINDINGS = [
+            Binding("escape", "dismiss_modal", "Cancel", show=True),
+        ]
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="custom-agent-box"):
+                yield Label("[bold yellow]➕ REGISTER CUSTOM CODING AGENT[/bold yellow]")
+                yield Label("Agent Display Name (e.g. 'My Local Agent'):", classes="field-label")
+                yield Input(placeholder="My Agent", id="in-c-name")
+                yield Label("CLI Executable Name (or binary in PATH):", classes="field-label")
+                yield Input(placeholder="myagent", id="in-c-cli")
+                yield Label("Install Command (e.g. 'pip install myagent' or 'git clone ...'):", classes="field-label")
+                yield Input(placeholder="npm install -g myagent", id="in-c-cmd")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("Save Custom Agent", id="btn-save-custom", variant="success")
+                    yield Button("Cancel", id="btn-cancel-custom", variant="default")
+
+        def action_dismiss_modal(self):
+            self.dismiss(False)
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-cancel-custom":
+                self.dismiss(False)
+            elif bid == "btn-save-custom":
+                name = self.query_one("#in-c-name", Input).value.strip()
+                cli = self.query_one("#in-c-cli", Input).value.strip()
+                cmd = self.query_one("#in-c-cmd", Input).value.strip()
+                if not name or not cmd:
+                    self.dismiss(False)
+                    return
+                cid = name.lower().replace(" ", "-")
+                c_def = {
+                    "id": cid,
+                    "name": name,
+                    "category": "Custom Agent",
+                    "desc": "User-configured custom coding agent",
+                    "cli_name": cli or cid,
+                    "detect_type": "cli",
+                    "install_cmd": cmd,
+                    "uninstall_cmd": "",
+                    "docs": ""
+                }
+                save_custom_agent(c_def)
+                self.dismiss(True)
+
+    class DesktopAgentStoreModal(ModalScreen):
+        CSS = """
+        DesktopAgentStoreModal {
+            align: center middle;
+        }
+        #agent-store-box {
+            width: 98;
+            height: 38;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #table-agent-store {
+            height: 20;
+            margin-top: 1;
+            margin-bottom: 1;
+            border: round $panel;
+        }
+        #agent-store-desc {
+            height: 3;
+            color: $accent;
+            border: round $surface;
+            padding: 0 1;
+        }
+        .btn-bar {
+            height: 3;
+            margin-top: 1;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+        BINDINGS = [
+            Binding("escape", "dismiss_store", "Close", show=True),
+        ]
+
+        def __init__(self, all_agents):
+            super().__init__()
+            self.all_agents = all_agents
+            self.catalog = list(AGENT_CATALOG) + get_custom_agents()
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="agent-store-box"):
+                yield Label("[bold cyan]🏪 CODING AGENTS ONLINE STORE & MANAGER[/bold cyan]")
+                yield Label("[dim]1-Click install CLI/GUI coding agents, run health check, or remove unwanted engines:[/dim]")
+                yield DataTable(id="table-agent-store")
+                yield Static("Select an agent to inspect details and commands.", id="agent-store-desc")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("📥 1-Click Install [Space]", id="btn-store-install", variant="success")
+                    yield Button("🗑️ Uninstall / Purge", id="btn-store-uninstall", variant="error")
+                    yield Button("🩺 Doctor Check", id="btn-store-doctor", variant="primary")
+                    yield Button("➕ Add Custom Agent", id="btn-store-custom", variant="warning")
+                    yield Button("Close [Esc]", id="btn-store-close", variant="default")
+
+        def on_mount(self):
+            table = self.query_one("#table-agent-store", DataTable)
+            table.clear(columns=True)
+            table.add_columns("Status", "Agent Name", "Category", "Install Command", "Docs")
+            table.cursor_type = "row"
+            self.refresh_table()
+
+        def refresh_table(self):
+            table = self.query_one("#table-agent-store", DataTable)
+            table.clear()
+            self.catalog = list(AGENT_CATALOG) + get_custom_agents()
+            for idx, ag in enumerate(self.catalog):
+                inst, det = detect_agent_status(ag)
+                status_badge = "[bold green]✔ INSTALLED[/bold green]" if inst else "[dim red]✗ AVAILABLE[/dim red]"
+                table.add_row(
+                    status_badge,
+                    ag["name"],
+                    ag.get("category", "Agent"),
+                    ag.get("install_cmd", "")[:32],
+                    ag.get("docs", "")[:28],
+                    key=f"ag-{idx}"
+                )
+
+        def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted):
+            if event.row_key and str(event.row_key.value).startswith("ag-"):
+                idx = int(str(event.row_key.value).replace("ag-", ""))
+                if 0 <= idx < len(self.catalog):
+                    ag = self.catalog[idx]
+                    inst, det = detect_agent_status(ag)
+                    st_str = f"[bold green]Installed ({det})[/bold green]" if inst else "[dim red]Not Installed[/dim red]"
+                    desc_box = self.query_one("#agent-store-desc", Static)
+                    desc_box.update(f"[bold]{ag['name']}[/bold] ({st_str})\n[dim]{ag.get('desc', '')}[/dim]\n[cyan]Cmd:[/cyan] {ag.get('install_cmd', '')}")
+
+        def action_dismiss_store(self):
+            self.dismiss(None)
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            table = self.query_one("#table-agent-store", DataTable)
+            if bid == "btn-store-close":
+                self.dismiss(None)
+                return
+
+            if table.cursor_row is None or not (0 <= table.cursor_row < len(self.catalog)):
+                return
+
+            ag = self.catalog[table.cursor_row]
+
+            if bid == "btn-store-doctor":
+                inst, rpt = verify_agent_doctor(ag)
+                self.app.notify(rpt, title="Agent Doctor Report", severity="information" if inst else "warning")
+            elif bid == "btn-store-install":
+                self.app.notify(f"Running install for {ag['name']}...", title="Installing Agent")
+                ok, msg = install_agent_package(ag)
+                self.refresh_table()
+                self.app.notify(msg, title="Install Complete" if ok else "Install Failed", severity="information" if ok else "error")
+            elif bid == "btn-store-uninstall":
+                ok, msg = uninstall_agent_package(ag, purge_files=True)
+                self.refresh_table()
+                self.app.notify(msg, title="Uninstalled Agent", severity="warning")
+            elif bid == "btn-store-custom":
+                self.app.push_screen(DesktopAddCustomAgentModal(), callback=self.on_custom_agent_added)
+
+        def on_custom_agent_added(self, res):
+            if res:
+                self.refresh_table()
+                self.app.notify("Custom agent added to store catalog!", title="Agent Added")
+
+
     class DesktopRegistryModal(ModalScreen):
         CSS = """
         DesktopRegistryModal {
@@ -4980,16 +6291,18 @@ if HAS_TEXTUAL:
                 yield Input(placeholder="🔑 Env Var / Param (e.g. GITHUB_TOKEN or BRAVE_API_KEY if needed)...", id="reg-env-input")
                 with Horizontal(classes="btn-bar"):
                     yield Button("Install to Active Agent", id="btn-reg-active", variant="success")
-                    yield Button("⚡ Install to ALL 11 Agents", id="btn-reg-all", variant="primary")
+                    yield Button("⚡ Broadcast to ALL Agents", id="btn-reg-all", variant="primary")
                     yield Button("Cancel", id="btn-reg-cancel", variant="default")
 
         def on_mount(self):
             table = self.query_one("#reg-table", DataTable)
             table.clear(columns=True)
-            table.add_columns("Category", "Server Name", "Package / Command", "Description")
+            table.add_columns("Status", "Category", "Server Name", "Package / Command", "Description")
             table.cursor_type = "row"
             for idx, item in enumerate(REGISTRY_MCPS):
-                table.add_row(item["category"], item["name"], f"{item['command']} {' '.join(item['args'][:2])}", item["desc"][:42], key=f"r-{idx}")
+                inst = is_mcp_installed(item["id"], self.target_agent)
+                badge = "[bold green]✔ ACTIVE[/bold green]" if inst else "[dim]Available[/dim]"
+                table.add_row(badge, item["category"], item["name"], f"{item['command']} {' '.join(item['args'][:2])}", item["desc"][:36], key=f"r-{idx}")
 
         def on_button_pressed(self, event: Button.Pressed):
             bid = event.button.id
@@ -5499,8 +6812,11 @@ if HAS_TEXTUAL:
         def compose(self) -> ComposeResult:
             with Vertical(id="warehouse-box"):
                 yield Label("[b cyan]📦 MASTER SKILLS & ROLES WAREHOUSE BROWSER[/b cyan]", id="warehouse-header")
-                wh_options = [(name, path) for name, path in WAREHOUSES]
-                default_val = WAREHOUSES[0][1] if WAREHOUSES else Select.BLANK
+                wh_options = [
+                    ("⭐ TOP 40 CURATED SKILLS STORE", "CURATED_TOP_40"),
+                    ("🌐 GITHUB ONLINE SKILLS SEARCH", "GITHUB_SEARCH"),
+                ] + [(name, path) for name, path in WAREHOUSES]
+                default_val = "CURATED_TOP_40"
                 yield Select(options=wh_options, value=default_val, id="sel-warehouse", prompt="Choose Warehouse...")
                 yield Input(placeholder="🔍 Type to filter skills in this warehouse...", id="warehouse-search")
                 yield DataTable(id="table-warehouse-skills")
@@ -5527,7 +6843,19 @@ if HAS_TEXTUAL:
         def load_skills_from_warehouse(self):
             w_path = self.current_warehouse_path
             self.skills_found = {}
-            if w_path and os.path.exists(w_path):
+            if w_path == "CURATED_TOP_40":
+                for item in REGISTRY_SKILLS:
+                    self.skills_found[item["id"]] = f"Curated: {item['category']} - {item['desc']}"
+            elif w_path == "GITHUB_SEARCH":
+                q = ""
+                try:
+                    q = self.query_one("#warehouse-search", Input).value.strip()
+                except Exception:
+                    pass
+                repos = search_github_skills(q or "claude-skills", limit=15)
+                for r in repos:
+                    self.skills_found[r["name"]] = r.get("clone_url") or r.get("url")
+            elif w_path and os.path.exists(w_path):
                 for item in sorted(os.listdir(w_path)):
                     p = os.path.join(w_path, item)
                     if os.path.isdir(p) and item not in (".git", "node_modules", ".claude"):
@@ -5572,6 +6900,21 @@ if HAS_TEXTUAL:
                 return
             sname = filtered[t.cursor_row]
             src = self.skills_found[sname]
+
+            if self.current_warehouse_path == "CURATED_TOP_40":
+                sk = next((s for s in REGISTRY_SKILLS if s["id"] == sname), None)
+                if sk:
+                    ok, msg = install_curated_skill(sk, self.agent_cfg, self.all_agents, broadcast=broadcast)
+                    self.load_skills_from_warehouse()
+                    self.notify(msg, title="Curated Skill Deployed", severity="information" if ok else "error")
+                return
+            elif self.current_warehouse_path == "GITHUB_SEARCH":
+                clone_url = src
+                self.notify(f"Cloning {sname} from GitHub...", title="Downloading Repo")
+                ok, msg = import_custom_github_repo(clone_url, self.agent_cfg, self.all_agents, broadcast=broadcast)
+                self.load_skills_from_warehouse()
+                self.notify(msg, title="GitHub Skill Imported" if ok else "Clone Failed", severity="information" if ok else "error")
+                return
 
             target_dirs = []
             if broadcast:
@@ -5862,6 +7205,7 @@ if HAS_TEXTUAL:
                         yield Button("💾 Export omni-profile.json", id="btn-side-export", variant="default")
                         yield Button("📥 Import omni-profile.json", id="btn-side-import", variant="default")
                         yield Button("🔄 Refresh All Runtimes", id="btn-side-refresh", variant="default")
+                        yield Button("🏪 Coding Agents Store", id="btn-side-agent-store", variant="warning")
                         yield Button("🗑️ Uninstall Agent", id="btn-uninstall-agent", variant="error")
                         yield Button("◀ Toggle Sidebar [Ctrl+B]", id="btn-toggle-side", variant="default")
 
@@ -6438,6 +7782,14 @@ if HAS_TEXTUAL:
             elif bid == "btn-toggle-side":
                 self.action_toggle_sidebar()
 
+            elif bid == "btn-side-agent-store":
+                def on_store_done(_):
+                    self.agents = discover_installed_agents()
+                    self.agent_keys = list(self.agents.keys())
+                    self.rebuild_sidebar_agent_buttons()
+                    self.load_active_agent_data()
+                self.push_screen(DesktopAgentStoreModal(self.agents), on_store_done)
+
             elif bid == "btn-side-palette":
                 self.action_open_command_palette()
 
@@ -6916,6 +8268,13 @@ if HAS_TEXTUAL:
                     self.action_refresh_data()
                 elif ctype == "uninstall_agent":
                     self.action_uninstall_agent()
+                elif ctype == "agent_store":
+                    def on_store_done(_):
+                        self.agents = discover_installed_agents()
+                        self.agent_keys = list(self.agents.keys())
+                        self.rebuild_sidebar_agent_buttons()
+                        self.load_active_agent_data()
+                    self.push_screen(DesktopAgentStoreModal(self.agents), on_store_done)
 
             self.push_screen(DesktopCommandPaletteModal(), handle_palette)
 
@@ -7034,6 +8393,23 @@ if HAS_TEXTUAL:
                     self.notify(msg, title="Add MCP Server", severity="information" if ok else "error")
             self.push_screen(DesktopAddMCPModal(ag), on_mcp_done)
 
+        def action_open_agent_store(self):
+            def on_store_done(_):
+                self.agents = discover_installed_agents()
+                self.agent_keys = list(self.agents.keys())
+                self.rebuild_sidebar_agent_buttons()
+                self.load_active_agent_data()
+            self.push_screen(DesktopAgentStoreModal(self.agents), on_store_done)
+
+        def action_open_warehouse(self):
+            ag = self.agents.get(self.selected_key)
+            def on_wh_done(_):
+                self.load_active_agent_data()
+            self.push_screen(DesktopWarehouseModal(ag, self.agents), on_wh_done)
+
+        def action_open_registry(self):
+            return self.action_open_registry_modal()
+
         def action_open_registry_modal(self):
             ag = self.agents.get(self.selected_key)
             def on_reg_done(res):
@@ -7136,6 +8512,9 @@ Options:
         print("OmniAgent Manager - Available MCP Workspaces & Presets:")
         for pr in MCP_PRESETS:
             print(f"  • {pr['name']:<25} : {pr['desc']}")
+        return
+    elif "--store" in sys.argv or "--agents" in sys.argv:
+        open_agent_store_cli()
         return
     elif "--radar" in sys.argv:
         res = scan_fleet_processes()
