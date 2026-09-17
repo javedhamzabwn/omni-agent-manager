@@ -436,8 +436,14 @@ def render_frame(lines):
 
 def read_key():
     if not HAS_MSVCRT:
-        return input().strip()
-    ch = msvcrt.getch()
+        try:
+            return input().strip()
+        except (KeyboardInterrupt, EOFError):
+            return 'CTRL_C'
+    try:
+        ch = msvcrt.getch()
+    except (KeyboardInterrupt, EOFError):
+        return 'CTRL_C'
     if ch in (b'\x00', b'\xe0'):
         ch2 = msvcrt.getch()
         if ch2 == b'H': return 'UP'
@@ -455,11 +461,28 @@ def read_key():
     elif ch == b'\x1b': return 'ESC'
     elif ch == b'\x08': return 'BACKSPACE'
     elif ch == b'\t': return 'TAB'
+    elif ch == b'\x03': return 'CTRL_C'
     else:
         try:
             return ch.decode('utf-8', errors='ignore')
         except:
             return ''
+
+def safe_input(prompt="", allow_cancel=True):
+    """
+    Robust interactive input prompt that catches Ctrl+C (KeyboardInterrupt),
+    EOFError, and cancellation keywords ('cancel', ':q', '0' when applicable)
+    without terminating or crashing the application.
+    """
+    try:
+        val = input(prompt)
+        if allow_cancel and val.strip().lower() in ('cancel', ':cancel', ':q', 'abort'):
+            print(f"\n{CLR_YELLOW}[Operation cancelled]{CLR_RESET}")
+            return None
+        return val
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n{CLR_YELLOW}[Operation cancelled]{CLR_RESET}")
+        return None
 
 def find_cli_executable(name):
     cmd = 'where.exe' if os.name == 'nt' else 'which'
@@ -897,6 +920,51 @@ def save_mcp_servers(agent_cfg, active_set):
                 json.dump(data, f, indent=2)
         except Exception:
             pass
+
+def delete_mcp_server(agent_cfg, server_name):
+    """Permanently removes an MCP server definition from the agent's configuration file."""
+    mcp_file = agent_cfg.get("mcp_file")
+    mcp_format = agent_cfg.get("mcp_format", "standard_json")
+    if not mcp_file or not os.path.exists(mcp_file):
+        return False, "MCP configuration file does not exist"
+
+    backup_config_file(mcp_file)
+    try:
+        if mcp_format in ("standard_json", "cline_json"):
+            with open(mcp_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            servers = data.get("mcpServers", {})
+            if server_name in servers:
+                del servers[server_name]
+            with open(mcp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+            for alt_f in agent_cfg.get("alt_mcps", []):
+                if os.path.exists(alt_f):
+                    backup_config_file(alt_f)
+                    try:
+                        with open(alt_f, "r", encoding="utf-8") as f:
+                            alt_data = json.load(f)
+                        if server_name in alt_data.get("mcpServers", {}):
+                            del alt_data["mcpServers"][server_name]
+                        with open(alt_f, "w", encoding="utf-8") as f:
+                            json.dump(alt_data, f, indent=2)
+                    except Exception:
+                        pass
+            return True, f"MCP server '{server_name}' permanently deleted!"
+        elif mcp_format == "opencode_json":
+            with open(mcp_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            target_key = "mcp" if "mcp" in data else "mcpServers"
+            if target_key in data and server_name in data[target_key]:
+                del data[target_key][server_name]
+            with open(mcp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            return True, f"MCP server '{server_name}' permanently deleted!"
+        else:
+            return False, f"Unsupported MCP format: {mcp_format}"
+    except Exception as e:
+        return False, str(e)
 
 # ================= UNIVERSAL AI AGENT MODEL & PROVIDER ENGINE =================
 
@@ -1684,35 +1752,41 @@ def run_universal_deploy_wizard(all_agents):
         print(f"  {CLR_WHITE}[{idx}] {p['name']:<32}{CLR_RESET} {CLR_DIM}({p['baseURL']}){CLR_RESET}")
     print(f"  {CLR_DIM}[0] Cancel{CLR_RESET}\n")
 
-    choice = input(f"{CLR_YELLOW}Select Provider Template [1-{len(preset_keys)}, 0]: {CLR_RESET}").strip()
-    if not choice or choice == "0":
+    choice = safe_input(f"{CLR_YELLOW}Select Provider Template [1-{len(preset_keys)}, 0]: {CLR_RESET}")
+    if choice is None or not choice.strip() or choice.strip() == "0":
         return
     try:
-        p_idx = int(choice) - 1
+        p_idx = int(choice.strip()) - 1
         selected_key = preset_keys[p_idx]
     except Exception:
         return
 
     preset = PROVIDER_PRESETS[selected_key]
     print(f"\n{CLR_GREEN}Selected: {preset['name']}{CLR_RESET}")
-    base_url = input(f"Endpoint Base URL [{preset['baseURL']}]: ").strip() or preset["baseURL"]
+    base_in = safe_input(f"Endpoint Base URL [{preset['baseURL']}]: ")
+    if base_in is None: return
+    base_url = base_in.strip() or preset["baseURL"]
     
     api_key = ""
     if preset["requires_key"] or selected_key == "custom":
-        api_key = input("API Key / Token (leave blank for local/env): ").strip()
+        key_in = safe_input("API Key / Token (leave blank for local/env): ")
+        if key_in is None: return
+        api_key = key_in.strip()
 
     def_model = preset["default_models"][0] if preset["default_models"] else "custom-model"
-    model_name = input(f"Default Active Model [{def_model}]: ").strip() or def_model
+    model_in = safe_input(f"Default Active Model [{def_model}]: ")
+    if model_in is None: return
+    model_name = model_in.strip() or def_model
 
     print(f"\n{CLR_YELLOW}Testing endpoint connectivity...{CLR_RESET}")
     is_live, msg = test_ping_endpoint(base_url)
     status_clr = CLR_GREEN if is_live else CLR_RED
     print(f"Endpoint Status: {status_clr}{msg}{CLR_RESET}\n")
 
-    confirm = input(f"{CLR_BOLD}Push this configuration to ALL installed agents? [y/N]: {CLR_RESET}").strip().lower()
-    if confirm != 'y':
+    confirm = safe_input(f"{CLR_BOLD}Push this configuration to ALL installed agents? [y/N]: {CLR_RESET}")
+    if confirm is None or confirm.strip().lower() != 'y':
         print("Cancelled.")
-        input("Press [Enter] to return...")
+        safe_input("Press [Enter] to return...")
         return
 
     print(f"\n{CLR_CYAN}Deploying across ecosystem...{CLR_RESET}")
@@ -1727,7 +1801,7 @@ def run_universal_deploy_wizard(all_agents):
             print(f"  - {f}")
 
     print()
-    input("Press [Enter] to continue...")
+    safe_input("Press [Enter] to continue...")
 
 def run_endpoint_test_tool():
     """Interactive tool to test connectivity to any model server or API."""
@@ -1754,25 +1828,26 @@ def run_endpoint_test_tool():
     print("  [C] Custom URL")
     print("  [0] Back\n")
 
-    ch = input(f"{CLR_YELLOW}Choose endpoint to test [1-8, C, 0]: {CLR_RESET}").strip()
-    if not ch or ch == "0":
+    ch = safe_input(f"{CLR_YELLOW}Choose endpoint to test [1-8, C, 0]: {CLR_RESET}")
+    if ch is None or not ch.strip() or ch.strip() == "0":
         return
 
+    ch = ch.strip()
     if ch.isdigit() and 1 <= int(ch) <= len(quick_targets):
         url = quick_targets[int(ch) - 1][1]
         name = quick_targets[int(ch) - 1][0]
     else:
-        url = input("Enter full URL (e.g. http://localhost:8000/v1): ").strip()
+        url_in = safe_input("Enter full URL (e.g. http://localhost:8000/v1): ")
+        if url_in is None or not url_in.strip():
+            return
+        url = url_in.strip()
         name = "Custom Endpoint"
-
-    if not url:
-        return
 
     print(f"\nTesting {CLR_WHITE}{name}{CLR_RESET} at {CLR_CYAN}{url}{CLR_RESET}...")
     is_live, msg = test_ping_endpoint(url)
     clr = CLR_GREEN if is_live else CLR_RED
     print(f"\nResult: {clr}{msg}{CLR_RESET}\n")
-    input("Press [Enter] to continue...")
+    safe_input("Press [Enter] to continue...")
 
 def manage_agent_models(agent_cfg, all_agents):
     """
@@ -1919,13 +1994,13 @@ def add_provider_interactive(agent_cfg):
     for idx, pk in enumerate(preset_keys, 1):
         p = PROVIDER_PRESETS[pk]
         print(f"  [{idx}] {p['name']:<32} {CLR_DIM}({p['baseURL']}){CLR_RESET}")
-    print("  [0] Cancel\n")
+    print("  [0] Cancel (or type 'cancel' / Ctrl+C)\n")
 
-    ch = input(f"{CLR_YELLOW}Select Provider Template [1-{len(preset_keys)}, 0]: {CLR_RESET}").strip()
-    if not ch or ch == "0":
+    ch = safe_input(f"{CLR_YELLOW}Select Provider Template [1-{len(preset_keys)}, 0]: {CLR_RESET}")
+    if ch is None or not ch.strip() or ch.strip() == "0":
         return
     try:
-        p_idx = int(ch) - 1
+        p_idx = int(ch.strip()) - 1
         pk = preset_keys[p_idx]
     except Exception:
         return
@@ -1933,13 +2008,19 @@ def add_provider_interactive(agent_cfg):
     p = PROVIDER_PRESETS[pk]
     prov_id = p["id"]
     prov_name = p["name"]
-    base_url = input(f"Endpoint Base URL [{p['baseURL']}]: ").strip() or p["baseURL"]
+    base_in = safe_input(f"Endpoint Base URL [{p['baseURL']}]: ")
+    if base_in is None: return
+    base_url = base_in.strip() or p["baseURL"]
     
     api_key = ""
     if p["requires_key"] or pk == "custom":
-        api_key = input("API Key / Token (optional for local): ").strip()
+        key_in = safe_input("API Key / Token (optional for local): ")
+        if key_in is None: return
+        api_key = key_in.strip()
 
-    models_input = input(f"Models to add (comma-separated, default: {','.join(p['default_models'][:3])}): ").strip()
+    models_in = safe_input(f"Models to add (comma-separated, default: {','.join(p['default_models'][:3])}): ")
+    if models_in is None: return
+    models_input = models_in.strip()
     if models_input:
         models_list = [m.strip() for m in models_input.split(",") if m.strip()]
     else:
@@ -1952,14 +2033,14 @@ def add_provider_interactive(agent_cfg):
 
     ok = add_agent_provider(agent_cfg, prov_id, prov_name, base_url, api_key=api_key, models_list=models_list)
     if ok:
-        set_active = input(f"Set {models_list[0]} as active model now? [Y/n]: ").strip().lower()
-        if set_active != 'n':
+        set_active_in = safe_input(f"Set {models_list[0]} as active model now? [Y/n]: ")
+        if set_active_in is not None and set_active_in.strip().lower() != 'n':
             set_agent_active_model(agent_cfg, models_list[0], provider_id=prov_id)
         print(f"\n{CLR_GREEN}[SUCCESS] Provider '{prov_name}' added to {agent_cfg['name']}!{CLR_RESET}")
     else:
         print(f"\n{CLR_RED}[ERROR] Failed to write configuration for {agent_cfg['name']}. Check file permissions.{CLR_RESET}")
     print()
-    input("Press [Enter] to continue...")
+    safe_input("Press [Enter] to continue...")
 
 def edit_provider_interactive(agent_cfg, info):
     """Allows editing current active provider base URL or API key."""
@@ -1968,9 +2049,13 @@ def edit_provider_interactive(agent_cfg, info):
     print(f"{CLR_BOLD}{CLR_CYAN}  EDIT AI PROVIDER OPTIONS: {agent_cfg['name'].upper()}{CLR_RESET}")
     print(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}\n")
     print(f"Current Base URL: {CLR_YELLOW}{info['base_url']}{CLR_RESET}")
-    new_url = input("New Base URL (leave blank to keep current): ").strip()
+    new_url_in = safe_input("New Base URL (leave blank to keep current): ")
+    if new_url_in is None: return
+    new_url = new_url_in.strip()
 
-    new_key = input("New API Key / Token (leave blank to keep current): ").strip()
+    new_key_in = safe_input("New API Key / Token (leave blank to keep current): ")
+    if new_key_in is None: return
+    new_key = new_key_in.strip()
 
     target_url = new_url if new_url else info["base_url"]
     prov_id = info.get("active_provider") or "custom"
@@ -1980,15 +2065,15 @@ def edit_provider_interactive(agent_cfg, info):
         print(f"\n{CLR_GREEN}[SUCCESS] Provider settings updated!{CLR_RESET}")
     else:
         print(f"\n{CLR_RED}[ERROR] Could not update settings.{CLR_RESET}")
-    input("Press [Enter] to continue...")
+    safe_input("Press [Enter] to continue...")
 
 def delete_model_interactive(agent_cfg, model_item):
     """Removes a model or provider entry."""
     init_screen()
     m_id = model_item["id"]
     p_id = model_item.get("provider")
-    confirm = input(f"{CLR_RED}Remove model '{m_id}' from {agent_cfg['name']}? [y/N]: {CLR_RESET}").strip().lower()
-    if confirm == 'y':
+    confirm_in = safe_input(f"{CLR_RED}Remove model '{m_id}' from {agent_cfg['name']}? [y/N]: {CLR_RESET}")
+    if confirm_in is not None and confirm_in.strip().lower() == 'y':
         # OpenCode model deletion
         aid = agent_cfg.get("id")
         if aid == "opencode":
@@ -2025,7 +2110,7 @@ def sync_provider_to_other_agents(agent_cfg, info, all_agents):
 
 # ================= INTERACTIVE CHECKLIST ENGINE =================
 
-def run_checklist(title, all_items, selected_set, details=None, agent_name="", allow_delete=True):
+def run_checklist(title, all_items, selected_set, details=None, agent_name="", allow_delete=True, path_resolver=None):
     items = sorted(list(all_items))
     selected = set(selected_set)
     cursor = 0
@@ -2088,7 +2173,7 @@ def run_checklist(title, all_items, selected_set, details=None, agent_name="", a
                 status_msg = ""
             del_hint = "  [Del] Remove" if allow_delete else ""
             lines.append(f"{CLR_BOLD}Controls:{CLR_RESET} [↑/↓] Navigate  [Space] Toggle  [Enter] Save & Apply{del_hint}")
-            lines.append(f"          [/] Search  [a] All  [d] None  [i] Invert  [Esc/q] Cancel")
+            lines.append(f"          [o] Open File  [/] Search  [a] All  [d] None  [i] Invert  [Esc/q] Cancel")
             lines.append("--------------------------------------------------------------------------------")
 
             render_frame(lines)
@@ -2128,6 +2213,27 @@ def run_checklist(title, all_items, selected_set, details=None, agent_name="", a
             elif key == 'c' and filter_text:
                 filter_text = ""
                 cursor = 0
+            elif key in ('o', 'O') and 0 <= cursor < total_filtered:
+                cur_it = filtered[cursor]
+                target_p = None
+                if callable(path_resolver):
+                    try:
+                        target_p = path_resolver(cur_it)
+                    except Exception:
+                        target_p = None
+                elif isinstance(details, dict) and cur_it in details and os.path.exists(str(details[cur_it])):
+                    target_p = str(details[cur_it])
+                elif os.path.exists(cur_it):
+                    target_p = cur_it
+
+                if target_p and os.path.exists(target_p):
+                    if os.path.isdir(target_p):
+                        ok, msg = desktop_open_explorer(target_p)
+                    else:
+                        ok, msg = desktop_open_editor(target_p)
+                    status_msg = f"Opened '{os.path.basename(target_p)}'."
+                else:
+                    status_msg = f"No file/folder path found for '{cur_it}'."
             elif key == 'a':
                 for it in filtered: selected.add(it)
                 status_msg = f"Selected all {len(filtered)} visible items."
@@ -2146,7 +2252,7 @@ def run_checklist(title, all_items, selected_set, details=None, agent_name="", a
                 print("  [1] Stash / Disable (move to available - safe)")
                 print("  [2] Permanently Delete from disk")
                 print("  [0] Cancel")
-                c_del = input("Choice: ").strip()
+                c_del = safe_input("Choice: ")
                 if c_del == "1":
                     selected.discard(it_del)
                     status_msg = f"Stashed '{it_del}'."
@@ -2183,7 +2289,10 @@ def add_skills_interactive(agent_cfg=None, all_agents=None):
     print("  [5] Scaffold New Custom Skill Template (Interactive Generator)")
     print("  [0] Cancel / Back")
     print("--------------------------------------------------------------------------------")
-    choice = input("Enter option [1-5/0]: ").strip()
+    choice = safe_input("Enter option [1-5/0]: ")
+    if choice is None or not choice.strip() or choice.strip() == "0":
+        return
+    choice = choice.strip()
 
     dest_dirs = []
     if agent_cfg and agent_cfg.get("skills_dir"):
@@ -2196,7 +2305,9 @@ def add_skills_interactive(agent_cfg=None, all_agents=None):
     if choice == "1":
         browse_warehouse_import(target_agent_cfg=agent_cfg)
     elif choice == "2":
-        path_in = input("\nEnter full path to skill directory: ").strip().strip('"')
+        path_in = safe_input("\nEnter full path to skill directory: ")
+        if path_in is None or not path_in.strip(): return
+        path_in = path_in.strip().strip('"')
         if os.path.exists(path_in):
             sname = os.path.basename(path_in)
             for d in dest_dirs:
@@ -2207,11 +2318,14 @@ def add_skills_interactive(agent_cfg=None, all_agents=None):
             print(f"\n{CLR_GREEN}[SUCCESS] Installed skill '{sname}' to {len(dest_dirs)} agent(s)!{CLR_RESET}")
         else:
             print(f"\n{CLR_RED}Path does not exist:{CLR_RESET} {path_in}")
-        input("Press [Enter] to continue...")
+        safe_input("Press [Enter] to continue...")
     elif choice == "3":
-        git_url = input("\nEnter Git / GitHub URL (e.g. https://github.com/user/repo): ").strip()
-        if git_url:
-            sname = input("Enter skill folder name: ").strip() or git_url.split("/")[-1].replace(".git", "")
+        git_url = safe_input("\nEnter Git / GitHub URL (e.g. https://github.com/user/repo): ")
+        if git_url and git_url.strip():
+            git_url = git_url.strip()
+            sname_in = safe_input("Enter skill folder name: ")
+            if sname_in is None: return
+            sname = sname_in.strip() or git_url.split("/")[-1].replace(".git", "")
             for d in dest_dirs:
                 os.makedirs(d, exist_ok=True)
                 dst = os.path.join(d, sname)
@@ -2219,15 +2333,19 @@ def add_skills_interactive(agent_cfg=None, all_agents=None):
                 print(f"Cloning into {dst}...")
                 subprocess.run(["git", "clone", "--depth", "1", git_url, dst])
             print(f"\n{CLR_GREEN}[SUCCESS] Cloned skill '{sname}'!{CLR_RESET}")
-        input("Press [Enter] to continue...")
+        safe_input("Press [Enter] to continue...")
     elif choice == "4":
-        cmd_run = input("\nEnter installation command: ").strip()
-        if cmd_run:
-            subprocess.run(cmd_run, shell=True)
-        input("Press [Enter] to continue...")
+        cmd_run = safe_input("\nEnter installation command: ")
+        if cmd_run and cmd_run.strip():
+            subprocess.run(cmd_run.strip(), shell=True)
+        safe_input("Press [Enter] to continue...")
     elif choice == "5":
-        sname = input("\nEnter new skill name (e.g. 'my-api-tool'): ").strip().lower().replace(" ", "-")
-        desc = input("Enter short description (When to use): ").strip()
+        sname_in = safe_input("\nEnter new skill name (e.g. 'my-api-tool'): ")
+        if sname_in is None or not sname_in.strip(): return
+        sname = sname_in.strip().lower().replace(" ", "-")
+        desc_in = safe_input("Enter short description (When to use): ")
+        if desc_in is None: return
+        desc = desc_in.strip()
         if sname:
             template = f"""---
 name: {sname}
@@ -2249,7 +2367,7 @@ Describe what this skill accomplishes.
                 with open(os.path.join(s_folder, "SKILL.md"), "w", encoding="utf-8") as f:
                     f.write(template)
             print(f"\n{CLR_GREEN}[SUCCESS] Created custom skill '{sname}'!{CLR_RESET}")
-            input("Press [Enter] to continue...")
+            safe_input("Press [Enter] to continue...")
 
 def add_mcp_interactive(agent_cfg=None, all_agents=None):
     """
@@ -2270,7 +2388,10 @@ def add_mcp_interactive(agent_cfg=None, all_agents=None):
     print("  [3] Clone MCP Server from another Agent (Antigravity, Claude, Cursor, Hermes)")
     print("  [0] Cancel / Back")
     print("--------------------------------------------------------------------------------")
-    choice = input("Enter option [1-3/0]: ").strip()
+    choice = safe_input("Enter option [1-3/0]: ")
+    if choice is None or not choice.strip() or choice.strip() == "0":
+        return
+    choice = choice.strip()
 
     target_configs = []
     if agent_cfg and agent_cfg.get("mcp_file"):
@@ -2285,47 +2406,49 @@ def add_mcp_interactive(agent_cfg=None, all_agents=None):
         print(CLR_DIM + 'Example: {"my-server": {"command": "npx", "args": ["-y", "my-package"]}}' + CLR_RESET)
         json_lines = []
         while True:
-            try:
-                line = input()
-                if line.strip() == "DONE" or (not line and json_lines and json_lines[-1] == ""):
-                    break
-                json_lines.append(line)
-            except EOFError:
+            line = safe_input()
+            if line is None or line.strip() == "DONE" or (not line and json_lines and json_lines[-1] == ""):
                 break
+            json_lines.append(line)
         raw_text = "\n".join(json_lines).strip()
-        try:
-            parsed = json.loads(raw_text)
-            if "mcpServers" in parsed: parsed = parsed["mcpServers"]
-            # Add to target configs
-            for ag in target_configs:
-                mf = ag.get("mcp_file")
-                if mf and os.path.exists(mf) and ag.get("mcp_format") in ("standard_json", "cline_json"):
-                    with open(mf, "r", encoding="utf-8") as f: data = json.load(f)
-                    if "mcpServers" not in data: data["mcpServers"] = {}
-                    data["mcpServers"].update(parsed)
-                    with open(mf, "w", encoding="utf-8") as f: json.dump(data, f, indent=2)
-            print(f"\n{CLR_GREEN}[SUCCESS] Injected MCP servers into {len(target_configs)} agent(s)!{CLR_RESET}")
-        except Exception as e:
-            print(f"\n{CLR_RED}JSON Parse Error:{CLR_RESET} {e}")
-        input("Press [Enter] to continue...")
+        if raw_text:
+            try:
+                parsed = json.loads(raw_text)
+                if "mcpServers" in parsed: parsed = parsed["mcpServers"]
+                # Add to target configs
+                for ag in target_configs:
+                    mf = ag.get("mcp_file")
+                    if mf and os.path.exists(mf) and ag.get("mcp_format") in ("standard_json", "cline_json"):
+                        with open(mf, "r", encoding="utf-8") as f: data = json.load(f)
+                        if "mcpServers" not in data: data["mcpServers"] = {}
+                        data["mcpServers"].update(parsed)
+                        with open(mf, "w", encoding="utf-8") as f: json.dump(data, f, indent=2)
+                print(f"\n{CLR_GREEN}[SUCCESS] Injected MCP servers into {len(target_configs)} agent(s)!{CLR_RESET}")
+            except Exception as e:
+                print(f"\n{CLR_RED}JSON Parse Error:{CLR_RESET} {e}")
+        safe_input("Press [Enter] to continue...")
 
     elif choice == "2":
         init_screen()
-        name = input("\nEnter MCP Server Name (e.g. 'sqlite-mcp'): ").strip()
-        if not name: return
+        name = safe_input("\nEnter MCP Server Name (e.g. 'sqlite-mcp'): ")
+        if not name or not name.strip(): return
+        name = name.strip()
         print("\nTransport Mechanism:")
         print("  [1] Stdio (Local binary / npx / uvx / python)")
         print("  [2] SSE / Remote HTTP (URL)")
-        ttype = input("Select [1/2]: ").strip()
+        ttype = safe_input("Select [1/2]: ")
+        if ttype is None: return
+        ttype = ttype.strip()
         new_entry = {}
         if ttype == "2":
-            url = input("Enter Server SSE URL: ").strip()
-            if not url: return
-            new_entry = {"serverUrl": url}
+            url = safe_input("Enter Server SSE URL: ")
+            if not url or not url.strip(): return
+            new_entry = {"serverUrl": url.strip()}
         else:
-            cmd = input("Enter Command (e.g. 'npx', 'python', 'uvx'): ").strip()
-            if not cmd: return
-            args_str = input("Enter Arguments (space separated, or empty): ").strip()
+            cmd = safe_input("Enter Command (e.g. 'npx', 'python', 'uvx'): ")
+            if not cmd or not cmd.strip(): return
+            cmd = cmd.strip()
+            args_str = safe_input("Enter Arguments (space separated, or empty): ")
             args = args_str.split() if args_str else []
             new_entry = {"command": cmd, "args": args}
 
@@ -2337,7 +2460,7 @@ def add_mcp_interactive(agent_cfg=None, all_agents=None):
                 data["mcpServers"][name] = new_entry
                 with open(mf, "w", encoding="utf-8") as f: json.dump(data, f, indent=2)
         print(f"\n{CLR_GREEN}[SUCCESS] Registered MCP '{name}' in {len(target_configs)} agent(s)!{CLR_RESET}")
-        input("Press [Enter] to continue...")
+        safe_input("Press [Enter] to continue...")
 
     elif choice == "3" and all_agents:
         init_screen()
@@ -2345,14 +2468,14 @@ def add_mcp_interactive(agent_cfg=None, all_agents=None):
         src_agents = [a for a in all_agents.values() if a.get("mcp_file") and os.path.exists(a["mcp_file"])]
         for idx, sa in enumerate(src_agents, 1):
             print(f"  [{idx}] {sa['name']}")
-        c_src = input("Choice: ").strip()
-        if c_src.isdigit() and 1 <= int(c_src) <= len(src_agents):
-            src_ag = src_agents[int(c_src)-1]
+        c_src = safe_input("Choice: ")
+        if c_src is not None and c_src.strip().isdigit() and 1 <= int(c_src.strip()) <= len(src_agents):
+            src_ag = src_agents[int(c_src.strip())-1]
             act_m, dis_m = read_mcp_config(src_ag)
             all_m = list(act_m.keys()) + list(dis_m.keys())
             if not all_m:
                 print("No MCP servers found in source agent.")
-                input("Press [Enter] to continue...")
+                safe_input("Press [Enter] to continue...")
                 return
             chosen_mcp = run_checklist(f"Select MCPs to Clone from: {src_ag['name']}", all_m, set(), agent_name=target_name, allow_delete=False)
             if chosen_mcp:
@@ -2642,7 +2765,13 @@ def manage_single_agent(agent_cfg, all_agents):
                     os.makedirs(s_dir, exist_ok=True)
                     os.makedirs(av_dir, exist_ok=True)
                     all_s = sorted(list(set(get_dir_items(s_dir)).union(set(get_dir_items(av_dir)))))
-                    new_sel = run_checklist("Skills Checklist Manager", all_s, set(get_dir_items(s_dir)), agent_name=agent_cfg["name"])
+                    def _resolve_skill_p(s):
+                        ap = os.path.join(s_dir, s)
+                        sp = os.path.join(av_dir, s) if av_dir else ""
+                        base = ap if os.path.exists(ap) else sp
+                        md = os.path.join(base, "SKILL.md")
+                        return md if os.path.exists(md) else base
+                    new_sel = run_checklist("Skills Checklist Manager", all_s, set(get_dir_items(s_dir)), agent_name=agent_cfg["name"], path_resolver=_resolve_skill_p)
                     if new_sel is not None:
                         for s in all_s:
                             ap = os.path.join(s_dir, s)
@@ -2662,7 +2791,7 @@ def manage_single_agent(agent_cfg, all_agents):
                         continue
                     act_m, dis_m = read_mcp_config(agent_cfg)
                     all_m = sorted(list(set(act_m.keys()).union(set(dis_m.keys()))))
-                    new_sel = run_checklist("MCP Servers Checklist Manager", all_m, set(act_m.keys()), agent_name=agent_cfg["name"])
+                    new_sel = run_checklist("MCP Servers Checklist Manager", all_m, set(act_m.keys()), agent_name=agent_cfg["name"], path_resolver=lambda _: mf)
                     if new_sel is not None:
                         save_mcp_servers(agent_cfg, new_sel)
                     needs_refresh = True
@@ -2684,7 +2813,7 @@ def manage_single_agent(agent_cfg, all_agents):
                     p_dir = agent_cfg.get("plugins_dir")
                     if p_dir and os.path.exists(p_dir):
                         plugs = get_agent_plugins(agent_cfg)
-                        run_checklist("Plugins Checklist", plugs, set(plugs), agent_name=agent_cfg["name"], allow_delete=False)
+                        run_checklist("Plugins Checklist", plugs, set(plugs), agent_name=agent_cfg["name"], allow_delete=False, path_resolver=lambda p: os.path.join(p_dir, p))
                     else:
                         init_screen()
                         print(f"\n{CLR_YELLOW}No plugins directory found for {agent_cfg['name']}.{CLR_RESET}")
@@ -2721,57 +2850,92 @@ def manage_single_agent(agent_cfg, all_agents):
 def open_agent_folder_cli():
     keys = list(FOLDER_DATA.keys())
     cursor_idx = 0
+    filter_text = ""
+    digit_buffer = ""
+    last_digit_time = 0.0
+
     init_screen()
     print(CLR_HIDE_CURSOR, end="", flush=True)
 
     try:
         while True:
+            # Filter categories if search active
+            if filter_text:
+                filtered_keys = [k for k in keys if (filter_text.lower() in FOLDER_DATA[k]["title"].lower() or filter_text.lower() in FOLDER_DATA[k]["desc"].lower() or filter_text.lower() in k)]
+            else:
+                filtered_keys = keys
+
+            total_entries = len(filtered_keys)
+            cursor_idx = 0 if total_entries == 0 else max(0, min(cursor_idx, total_entries))
+
             lines = []
             lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
             lines.append(f"{CLR_BOLD}{CLR_CYAN}                   AI AGENT ECOSYSTEM CONTROL CENTER - FOLDERS                  {CLR_RESET}")
             lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
             lines.append(f"{CLR_WHITE}{CLR_BOLD}Select an AI Agent or Category to explore its Skills, MCPs, and Configs:{CLR_RESET}")
+            if filter_text:
+                lines.append(f"{CLR_YELLOW}Search Filter: '{filter_text}' (Press 'c' to clear filter){CLR_RESET}")
             lines.append("--------------------------------------------------------------------------------")
-            for idx, key in enumerate(keys):
+            for idx, key in enumerate(filtered_keys):
                 cat = FOLDER_DATA[key]
                 is_active = (idx == cursor_idx)
                 cursor = f"{CLR_CYAN}>{CLR_RESET}" if is_active else " "
                 num_tag = f"[{key:>2}]"
-                if key == "17":
+                if key == "17" and not filter_text:
                     lines.append(f"{CLR_DIM}--- MASTER PUBLISH WAREHOUSES (D: DRIVE) -------------------------------------{CLR_RESET}")
                 if is_active:
                     lines.append(f" {cursor} {CLR_REVERSE} {num_tag} {cat['title']:<32}{CLR_RESET} {CLR_YELLOW}{cat['desc']}{CLR_RESET}")
                 else:
                     lines.append(f" {cursor} {CLR_BOLD}{num_tag}{CLR_RESET} {cat['title']:<32} {CLR_DIM}{cat['desc']}{CLR_RESET}")
 
-            is_exit = (cursor_idx == len(keys))
+            is_exit = (cursor_idx == total_entries)
             exit_cur = f"{CLR_CYAN}>{CLR_RESET}" if is_exit else " "
             if is_exit:
                 lines.append(f" {exit_cur} {CLR_REVERSE} [ 0] Return to Main Menu                 {CLR_RESET}")
             else:
                 lines.append(f" {exit_cur} {CLR_BOLD} [ 0]{CLR_RESET} Return to Main Menu")
             lines.append("--------------------------------------------------------------------------------")
-            lines.append(f"{CLR_DIM}Navigation: [↑/↓] Move  [Enter] Open Category  [1-20/0] Jump  [Esc/q] Back{CLR_RESET}")
+            buf_tag = f" {CLR_YELLOW}[Jump: {digit_buffer}]{CLR_RESET}" if (time.time() - last_digit_time < 0.8 and digit_buffer) else ""
+            lines.append(f"{CLR_DIM}Navigation: [↑/↓] Move  [Enter] Open  [/] Search  [1-20/0] Jump{buf_tag}  [Esc/q] Back{CLR_RESET}")
             lines.append("================================================================================")
 
             render_frame(lines)
 
             k = read_key()
             if k in ('UP', 'k'):
-                cursor_idx = (cursor_idx - 1) % (len(keys) + 1)
+                cursor_idx = (cursor_idx - 1) % (total_entries + 1)
             elif k in ('DOWN', 'j'):
-                cursor_idx = (cursor_idx + 1) % (len(keys) + 1)
-            elif k in ('ESC', 'q') or (k == 'ENTER' and cursor_idx == len(keys)) or k == '0':
+                cursor_idx = (cursor_idx + 1) % (total_entries + 1)
+            elif k in ('ESC', 'q', 'CTRL_C') or (k == 'ENTER' and cursor_idx == total_entries) or k == '0':
                 break
             elif k == 'ENTER':
-                run_folder_category_cli(keys[cursor_idx])
-                init_screen()
-            elif k.isdigit():
-                val = k
-                if val in FOLDER_DATA:
-                    cursor_idx = keys.index(val)
-                    run_folder_category_cli(val)
+                if 0 <= cursor_idx < total_entries:
+                    run_folder_category_cli(filtered_keys[cursor_idx])
                     init_screen()
+            elif k == '/':
+                init_screen()
+                f_in = safe_input(f"\n{CLR_CYAN}Search categories:{CLR_RESET} ")
+                if f_in is not None:
+                    filter_text = f_in.strip()
+                    cursor_idx = 0
+                init_screen()
+            elif k == 'c' and filter_text:
+                filter_text = ""
+                cursor_idx = 0
+            elif k.isdigit():
+                now = time.time()
+                if now - last_digit_time < 0.8:
+                    digit_buffer += k
+                else:
+                    digit_buffer = k
+                last_digit_time = now
+
+                # Match against category keys
+                if digit_buffer in keys:
+                    if digit_buffer in filtered_keys:
+                        cursor_idx = filtered_keys.index(digit_buffer)
+                elif k in keys and k in filtered_keys:
+                    cursor_idx = filtered_keys.index(k)
     finally:
         print(CLR_SHOW_CURSOR, end="", flush=True)
 
@@ -2780,6 +2944,11 @@ def run_folder_category_cli(cat_key):
     if not cat: return
     items = cat.get("items", [])
     cursor_idx = 0
+    filter_text = ""
+    digit_buffer = ""
+    last_digit_time = 0.0
+    status_msg = ""
+
     init_screen()
     print(CLR_HIDE_CURSOR, end="", flush=True)
 
@@ -2787,41 +2956,91 @@ def run_folder_category_cli(cat_key):
 
     try:
         while True:
+            if filter_text:
+                filtered_items = [it for it in items_status if (filter_text.lower() in it[0].lower() or filter_text.lower() in it[1].lower() or filter_text.lower() in it[2].lower())]
+            else:
+                filtered_items = items_status
+
+            total_items = len(filtered_items)
+            cursor_idx = 0 if total_items == 0 else max(0, min(cursor_idx, total_items - 1))
+
             lines = []
             lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
             lines.append(f"{CLR_BOLD}{CLR_CYAN}  {cat['title'].upper()} - FOLDERS & CONFIGURATIONS {CLR_RESET}")
             lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
-            for idx, (name, path, desc, exists) in enumerate(items_status):
-                st = f"{CLR_GREEN}EXISTS{CLR_RESET}" if exists else f"{CLR_RED}MISSING{CLR_RESET}"
-                is_active = (idx == cursor_idx)
-                indicator = f"{CLR_CYAN}> {CLR_RESET}" if is_active else "  "
-                if is_active:
-                    lines.append(f"{indicator}{CLR_REVERSE} [{idx+1:>2}] {name:<36} [{st}]{CLR_RESET}")
-                    lines.append(f"     {CLR_YELLOW}Path: {path}{CLR_RESET}")
-                    lines.append(f"     {CLR_DIM}Desc: {desc}{CLR_RESET}")
-                else:
-                    lines.append(f"{indicator}{CLR_WHITE} [{idx+1:>2}] {name:<36} [{st}]{CLR_RESET}")
+            if filter_text:
+                lines.append(f"{CLR_YELLOW}Search Filter: '{filter_text}' (Press 'c' to clear filter){CLR_RESET}")
+            if status_msg:
+                lines.append(f"{CLR_GREEN}{status_msg}{CLR_RESET}")
+                status_msg = ""
+
+            if total_items == 0:
+                lines.append(f"  {CLR_DIM}(No folder items match '{filter_text}'){CLR_RESET}")
+            else:
+                for idx, (name, path, desc, exists) in enumerate(filtered_items):
+                    st = f"{CLR_GREEN}EXISTS{CLR_RESET}" if exists else f"{CLR_RED}MISSING{CLR_RESET}"
+                    is_active = (idx == cursor_idx)
+                    indicator = f"{CLR_CYAN}> {CLR_RESET}" if is_active else "  "
+                    if is_active:
+                        lines.append(f"{indicator}{CLR_REVERSE} [{idx+1:>2}] {name:<36} [{st}]{CLR_RESET}")
+                        lines.append(f"     {CLR_YELLOW}Path: {path}{CLR_RESET}")
+                        lines.append(f"     {CLR_DIM}Desc: {desc}{CLR_RESET}")
+                    else:
+                        lines.append(f"{indicator}{CLR_WHITE} [{idx+1:>2}] {name:<36} [{st}]{CLR_RESET}")
+
             lines.append("--------------------------------------------------------------------------------")
-            lines.append(f"{CLR_DIM}[E] Explorer  [V] Editor  [C] Copy Path  [T] Terminal  [↑/↓] Move  [Esc/q] Back{CLR_RESET}")
+            buf_tag = f" {CLR_YELLOW}[Jump: {digit_buffer}]{CLR_RESET}" if (time.time() - last_digit_time < 0.8 and digit_buffer) else ""
+            lines.append(f"{CLR_DIM}[Enter/E] Explorer  [V] Editor  [C] Copy  [T] Terminal  [/] Search  [1-{max(1, total_items)}] Jump{buf_tag}  [Esc/q] Back{CLR_RESET}")
             lines.append("================================================================================")
 
             render_frame(lines)
 
             k = read_key()
             if k in ('UP', 'k'):
-                cursor_idx = (cursor_idx - 1) % len(items)
+                if total_items > 0: cursor_idx = (cursor_idx - 1) % total_items
             elif k in ('DOWN', 'j'):
-                cursor_idx = (cursor_idx + 1) % len(items)
-            elif k in ('ESC', 'q'):
+                if total_items > 0: cursor_idx = (cursor_idx + 1) % total_items
+            elif k in ('ESC', 'q', 'CTRL_C'):
                 break
             elif k in ('ENTER', 'e', 'E'):
-                desktop_open_explorer(items[cursor_idx][1])
+                if 0 <= cursor_idx < total_items:
+                    desktop_open_explorer(filtered_items[cursor_idx][1])
+                    status_msg = f"✓ Opened in File Explorer: {filtered_items[cursor_idx][0]}"
             elif k in ('v', 'V'):
-                desktop_open_editor(items[cursor_idx][1])
-            elif k in ('c', 'C'):
-                desktop_copy_clipboard(items[cursor_idx][1])
+                if 0 <= cursor_idx < total_items:
+                    desktop_open_editor(filtered_items[cursor_idx][1])
+                    status_msg = f"✓ Opened in Editor: {filtered_items[cursor_idx][0]}"
+            elif k in ('c', 'C') and not filter_text:
+                if 0 <= cursor_idx < total_items:
+                    desktop_copy_clipboard(filtered_items[cursor_idx][1])
+                    status_msg = f"✓ Copied path to clipboard!"
+            elif k == 'c' and filter_text:
+                filter_text = ""
+                cursor_idx = 0
             elif k in ('t', 'T'):
-                desktop_open_terminal(items[cursor_idx][1])
+                if 0 <= cursor_idx < total_items:
+                    desktop_open_terminal(filtered_items[cursor_idx][1])
+                    status_msg = f"✓ Launched terminal for: {filtered_items[cursor_idx][0]}"
+            elif k == '/':
+                init_screen()
+                f_in = safe_input(f"\n{CLR_CYAN}Search folder items:{CLR_RESET} ")
+                if f_in is not None:
+                    filter_text = f_in.strip()
+                    cursor_idx = 0
+                init_screen()
+            elif k.isdigit():
+                now = time.time()
+                if now - last_digit_time < 0.8:
+                    digit_buffer += k
+                else:
+                    digit_buffer = k
+                last_digit_time = now
+
+                val_num = int(digit_buffer)
+                if 1 <= val_num <= total_items:
+                    cursor_idx = val_num - 1
+                elif 1 <= int(k) <= total_items:
+                    cursor_idx = int(k) - 1
     finally:
         print(CLR_SHOW_CURSOR, end="", flush=True)
 
@@ -3617,7 +3836,7 @@ def toggle_trimmed_subtool(agent_id, server_name, tool_name, agent_cfg=None):
     except Exception as e:
         return False, str(e)
 
-def query_mcp_tools(server_name, server_def, timeout=4.0):
+def query_mcp_tools(server_name, server_def, timeout=12.0):
     """Query live MCP server tools schema via JSON-RPC protocol without LLM tokens."""
     cmd = server_def.get("command")
     args = list(server_def.get("args", []))
@@ -3800,24 +4019,49 @@ def scan_fleet_processes():
     return {"engines": engines, "processes": procs}
 
 def extract_agent_config_flags(agent_cfg):
-    """Recursively scan agent JSON configs to discover all toggleable boolean feature flags."""
+    """Recursively scan agent JSON configs to discover all toggleable boolean feature flags for THIS agent."""
     flags = []
     files_to_check = []
-    mcp_file = agent_cfg.get("mcp_file")
-    if mcp_file and os.path.exists(mcp_file):
-        files_to_check.append(mcp_file)
 
-    ag_id = agent_cfg.get("id", "")
+    # 1. Direct agent config files
+    for k in ("config_file", "mcp_file"):
+        cf = agent_cfg.get(k)
+        if cf and os.path.exists(cf) and cf.endswith(".json") and cf not in files_to_check:
+            files_to_check.append(cf)
+
+    ag_id = agent_cfg.get("id", "").lower()
+
+    # 2. Agent-specific candidates
     candidates = [
         os.path.join(USERPROFILE, f".{ag_id}.json"),
         os.path.join(USERPROFILE, f".{ag_id}", "config.json"),
+        os.path.join(USERPROFILE, f".{ag_id}", "settings.json"),
         os.path.join(USERPROFILE, ".config", ag_id, f"{ag_id}.json"),
-        os.path.join(USERPROFILE, ".gemini", "antigravity", "config.json"),
-        os.path.join(USERPROFILE, ".gemini", "config.json"),
-        os.path.join(USERPROFILE, ".cursor", "settings.json"),
-        os.path.join(USERPROFILE, "AppData", "Roaming", "Cursor", "User", "settings.json"),
-        os.path.join(USERPROFILE, "AppData", "Roaming", "Code", "User", "settings.json"),
+        os.path.join(USERPROFILE, ".config", ag_id, "config.json"),
     ]
+
+    if ag_id == "antigravity":
+        candidates.extend([
+            os.path.join(USERPROFILE, ".gemini", "antigravity", "config.json"),
+            os.path.join(USERPROFILE, ".gemini", "config.json"),
+            os.path.join(USERPROFILE, ".antigravity-ide", "settings.json"),
+            os.path.join(USERPROFILE, ".antigravity-ide", "config.json"),
+        ])
+    elif ag_id == "claude":
+        candidates.extend([
+            os.path.join(USERPROFILE, ".claude.json"),
+            os.path.join(USERPROFILE, ".claude", "settings.json"),
+            os.path.join(LOCALAPPDATA, "Claude", "claude_desktop_config.json"),
+        ])
+    elif ag_id == "cursor":
+        candidates.extend([
+            os.path.join(USERPROFILE, ".cursor", "settings.json"),
+            os.path.join(USERPROFILE, "AppData", "Roaming", "Cursor", "User", "settings.json"),
+        ])
+    elif ag_id in ("kilo", "cline", "roo", "copilot"):
+        # Only VS Code extension agents should check VS Code User settings.json
+        candidates.append(os.path.join(USERPROFILE, "AppData", "Roaming", "Code", "User", "settings.json"))
+
     for c in candidates:
         if c and os.path.exists(c) and c not in files_to_check:
             files_to_check.append(c)
@@ -4338,6 +4582,10 @@ if HAS_TEXTUAL:
             ("ag:kilo", "⚪ Switch to Agent: Kilo Agent", "agent"),
         ]
 
+        BINDINGS = [
+            Binding("escape", "dismiss_palette", "Close", show=True),
+        ]
+
         def compose(self) -> ComposeResult:
             with Vertical(id="palette-box"):
                 yield Label("[b cyan]⚡ FUZZY COMMAND PALETTE[/b cyan]  [dim](LazyGit / VS Code pattern)[/dim]")
@@ -4361,11 +4609,82 @@ if HAS_TEXTUAL:
                     opt_list.add_option(label)
                     self.current_filtered.append((cid, label, ctype))
 
+        def action_dismiss_palette(self):
+            self.dismiss(None)
+
+        def on_key(self, event):
+            if event.key == "escape":
+                event.prevent_default()
+                event.stop()
+                self.dismiss(None)
+
         def on_option_list_option_selected(self, event: OptionList.OptionSelected):
             idx = event.option_index
             if 0 <= idx < len(self.current_filtered):
                 cmd_item = self.current_filtered[idx]
                 self.dismiss(cmd_item)
+
+    class DesktopConfirmModal(ModalScreen):
+        CSS = """
+        DesktopConfirmModal {
+            align: center middle;
+        }
+        #confirm-box {
+            width: 65;
+            height: auto;
+            max-height: 85%;
+            background: $surface;
+            border: round $error;
+            padding: 1 2;
+        }
+        #confirm-title {
+            text-style: bold;
+            color: $error;
+            margin-bottom: 1;
+        }
+        #confirm-msg {
+            margin-bottom: 1;
+        }
+        .btn-bar {
+            height: 3;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+        BINDINGS = [
+            Binding("escape", "dismiss_modal", "Cancel", show=True),
+        ]
+
+        def __init__(self, title, message, confirm_label="Delete", confirm_variant="error"):
+            super().__init__()
+            self.modal_title = title
+            self.message_text = message
+            self.confirm_label = confirm_label
+            self.confirm_variant = confirm_variant
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="confirm-box"):
+                yield Label(f"[bold red]{self.modal_title}[/bold red]", id="confirm-title")
+                yield Label(self.message_text, id="confirm-msg")
+                with Horizontal(classes="btn-bar"):
+                    yield Button(self.confirm_label, id="btn-confirm-yes", variant=self.confirm_variant)
+                    yield Button("Cancel", id="btn-confirm-no", variant="default")
+
+        def action_dismiss_modal(self):
+            self.dismiss(False)
+
+        def on_button_pressed(self, event: Button.Pressed):
+            if event.button.id == "btn-confirm-yes":
+                self.dismiss(True)
+            else:
+                self.dismiss(False)
+
+        def on_key(self, event):
+            if event.key == "escape":
+                event.prevent_default()
+                event.stop()
+                self.dismiss(False)
 
     class DesktopRegistryModal(ModalScreen):
         CSS = """
@@ -4640,8 +4959,21 @@ if HAS_TEXTUAL:
         def load_tools(self):
             t_table = self.query_one("#table-tools", DataTable)
             t_table.clear()
+            t_table.add_row("[bold cyan]⏳ QUERYING[/bold cyan]", "Connecting to runtime...", "-", "Querying live JSON-RPC schema (12s timeout)...", key="loading")
+            self.load_tools_worker()
+
+        @work(thread=True)
+        def load_tools_worker(self):
             self.trimmed_set = get_trimmed_subtools(self.agent_cfg.get("id", "agent"), self.server_name)
-            ok, res = query_mcp_tools(self.server_name, self.server_def, timeout=4.0)
+            ok, res = query_mcp_tools(self.server_name, self.server_def, timeout=12.0)
+            self.app.call_from_thread(self._populate_tools_result, ok, res)
+
+        def _populate_tools_result(self, ok, res):
+            try:
+                t_table = self.query_one("#table-tools", DataTable)
+            except Exception:
+                return
+            t_table.clear()
             if ok and isinstance(res, list):
                 self.tools = res
                 for idx, t in enumerate(self.tools):
@@ -4655,7 +4987,7 @@ if HAS_TEXTUAL:
             else:
                 self.tools = []
                 err = str(res)
-                t_table.add_row("[dim]Error[/dim]", "Query Failed", "0", err[:50])
+                t_table.add_row("[dim red]✖ ERROR[/dim red]", "Query Failed", "0", err[:50])
 
         def action_toggle_trim_selected(self):
             t_table = self.query_one("#table-tools", DataTable)
@@ -5167,6 +5499,11 @@ if HAS_TEXTUAL:
             height: 1fr;
             border: round $panel;
             background: $surface;
+            scrollbar-size-horizontal: 1;
+            scrollbar-size-vertical: 1;
+            scrollbar-color: $primary 60%;
+            scrollbar-color-hover: $primary;
+            scrollbar-color-active: $accent;
         }
         DataTable > .datatable--cursor {
             background: $primary 30%;
@@ -5298,6 +5635,8 @@ if HAS_TEXTUAL:
                             yield Input(placeholder="🔍 Type to filter skills in real time...", id="skills-filter")
                             with HorizontalScroll(classes="action-bar"):
                                 yield Button("⇄ Toggle [Space]", id="btn-skill-toggle", variant="primary")
+                                yield Button("📂 Open [O]", id="btn-open-skill-file", variant="default")
+                                yield Button("🗑️ Delete", id="btn-delete-skill-perm", variant="error")
                                 yield Button("Filter: [All Skills] ▾", id="btn-skill-filter-mode", variant="default")
                                 yield Button("✔ All", id="btn-skill-all", variant="success")
                                 yield Button("✖ None", id="btn-skill-none", variant="error")
@@ -5309,6 +5648,8 @@ if HAS_TEXTUAL:
                             with HorizontalScroll(classes="action-bar"):
                                 yield Button("⇄ Toggle [Space]", id="btn-toggle-mcp", variant="primary")
                                 yield Button("🔍 Inspect [I]", id="btn-inspect-tools", variant="warning")
+                                yield Button("📄 Config [O]", id="btn-open-mcp-config", variant="default")
+                                yield Button("🗑️ Delete", id="btn-delete-mcp-server", variant="error")
                                 yield Button("⚡ Health All", id="btn-health-check", variant="default")
                                 yield Button("⚡ Ping [H]", id="btn-ping-mcp-health", variant="default")
                                 yield Button("📦 Registry", id="btn-open-registry", variant="success")
@@ -5436,17 +5777,20 @@ if HAS_TEXTUAL:
 
             m_table = self.query_one("#table-models", DataTable)
             m_table.clear(columns=True)
-            m_table.add_columns("Status", "Model Identifier", "Provider Type", "Context / Tier")
+            m_table.add_columns("Status", "Model Identifier", "Provider Type", "Context / Tier", "Quick Action")
             m_table.cursor_type = "row"
 
             for idx, m in enumerate(m_info["models"]):
                 if m.get("is_active"):
                     badge = "[bold #a6e3a1]  ● ACTIVE [ON]   [/bold #a6e3a1]"
+                    act = "[bold #89b4fa] [ ⇄ Set Active (Enter) / Toggle (Space) ] [/bold #89b4fa]"
                 elif m.get("is_enabled", True):
                     badge = "[bold #89b4fa]  [✓] ENABLED     [/bold #89b4fa]"
+                    act = "[bold #a6e3a1] [ ⇄ Set Active (Enter) / Toggle (Space) ] [/bold #a6e3a1]"
                 else:
                     badge = "[dim #6c7086]  [ ] DISABLED    [/dim #6c7086]"
-                m_table.add_row(badge, m["id"], m.get("provider", "native"), m.get("name", ""), key=f"m-{idx}")
+                    act = "[bold #fab387] [ ⇄ Set Active (Enter) / Toggle (Space) ] [/bold #fab387]"
+                m_table.add_row(badge, m["id"], m.get("provider", "native"), m.get("name", ""), act, key=f"m-{idx}")
 
             if saved_m_row is not None and m_table.row_count > 0:
                 m_table.move_cursor(row=min(saved_m_row, m_table.row_count - 1), scroll=False)
@@ -5713,7 +6057,10 @@ if HAS_TEXTUAL:
             if event.key == "space":
                 focused = self.focused
                 if isinstance(focused, DataTable):
-                    if focused.id == "table-mcps":
+                    if focused.id == "table-models":
+                        event.prevent_default()
+                        self.action_toggle_model()
+                    elif focused.id == "table-mcps":
                         event.prevent_default()
                         self.action_toggle_mcp()
                     elif focused.id == "table-skills":
@@ -5722,6 +6069,34 @@ if HAS_TEXTUAL:
                     elif focused.id == "table-features":
                         event.prevent_default()
                         self.action_toggle_config_feature()
+            elif event.key in ("left", "h"):
+                focused = self.focused
+                if isinstance(focused, DataTable):
+                    event.prevent_default()
+                    focused.scroll_left(animate=False)
+            elif event.key in ("right", "l"):
+                focused = self.focused
+                if isinstance(focused, DataTable):
+                    event.prevent_default()
+                    focused.scroll_right(animate=False)
+            elif event.key in ("o", "O"):
+                focused = self.focused
+                if isinstance(focused, DataTable):
+                    if focused.id == "table-skills":
+                        event.prevent_default()
+                        self.action_open_skill_file()
+                    elif focused.id == "table-mcps":
+                        event.prevent_default()
+                        self.action_open_mcp_config()
+            elif event.key == "delete":
+                focused = self.focused
+                if isinstance(focused, DataTable):
+                    if focused.id == "table-skills":
+                        event.prevent_default()
+                        self.action_delete_skill_permanent()
+                    elif focused.id == "table-mcps":
+                        event.prevent_default()
+                        self.action_delete_mcp_server()
 
         def on_button_pressed(self, event: Button.Pressed):
             bid = event.button.id
@@ -5786,6 +6161,12 @@ if HAS_TEXTUAL:
             elif bid == "btn-inspect-tools":
                 self.action_open_tool_inspector()
 
+            elif bid == "btn-open-mcp-config":
+                self.action_open_mcp_config()
+
+            elif bid == "btn-delete-mcp-server":
+                self.action_delete_mcp_server()
+
             elif bid == "btn-side-radar":
                 self.action_open_fleet_radar()
 
@@ -5834,6 +6215,12 @@ if HAS_TEXTUAL:
 
             elif bid == "btn-skill-toggle":
                 self.action_toggle_skill()
+
+            elif bid == "btn-open-skill-file":
+                self.action_open_skill_file()
+
+            elif bid == "btn-delete-skill-perm":
+                self.action_delete_skill_permanent()
 
             elif bid == "btn-skill-all":
                 self.action_activate_all_skills()
@@ -5896,11 +6283,14 @@ if HAS_TEXTUAL:
                 m_info = get_agent_models_and_providers(ag)
                 if 0 <= coord.row < len(m_info["models"]):
                     model_item = m_info["models"][coord.row]
-                    model_id = model_item.get("full_id") or model_item["id"]
-                    set_agent_active_model(ag, model_id, provider_id=model_item.get("provider"))
-                    self.load_active_agent_data()
-                    self.load_global_matrix()
-                    self.notify(f"Active model switched to: {model_id}", title="Model Changed")
+                    if coord.column == 4:
+                        self.action_toggle_model()
+                    else:
+                        model_id = model_item.get("full_id") or model_item["id"]
+                        set_agent_active_model(ag, model_id, provider_id=model_item.get("provider"))
+                        self.load_active_agent_data()
+                        self.load_global_matrix()
+                        self.notify(f"Active model switched to: {model_id}", title="Model Changed")
             elif tid == "table-presets":
                 self.action_apply_preset()
             elif tid == "table-mcps":
@@ -5912,32 +6302,105 @@ if HAS_TEXTUAL:
             elif tid == "table-explorer":
                 self.perform_explorer_action("explorer")
 
+        def _get_selected_mcp_name(self):
+            mcp_table = self.query_one("#table-mcps", DataTable)
+            if mcp_table.cursor_row is None or mcp_table.row_count == 0:
+                return None
+            ag = self.agents.get(self.selected_key)
+            act_m, dis_m = read_mcp_config(ag)
+            sorted_mcps = sorted(list(set(act_m.keys()).union(set(dis_m.keys()))))
+            if 0 <= mcp_table.cursor_row < len(sorted_mcps):
+                return sorted_mcps[mcp_table.cursor_row]
+            return None
+
+        def _get_selected_skill_name(self):
+            s_table = self.query_one("#table-skills", DataTable)
+            if s_table.cursor_row is None or s_table.row_count == 0:
+                return None
+            ag = self.agents.get(self.selected_key)
+            sd = ag.get("skills_dir")
+            sav = ag.get("skills_available")
+            if not sd or not sav: return None
+            act_s, av_s = get_agent_skills(ag)
+            all_s = sorted(list(set(act_s).union(set(av_s))))
+            q = ""
+            try:
+                q = self.query_one("#skills-filter", Input).value.strip().lower()
+            except Exception:
+                pass
+
+            filtered = []
+            for s in all_s:
+                is_active = (s in act_s)
+                if self.skill_filter_mode == "active" and not is_active:
+                    continue
+                if self.skill_filter_mode == "stashed" and is_active:
+                    continue
+                if q and q not in s.lower():
+                    continue
+                filtered.append(s)
+
+            if 0 <= s_table.cursor_row < len(filtered):
+                return filtered[s_table.cursor_row]
+            return None
+
         def action_toggle_mcp(self):
             mcp_table = self.query_one("#table-mcps", DataTable)
             if mcp_table.cursor_row is not None and mcp_table.row_count > 0:
                 saved_row = mcp_table.cursor_row
+                server_name = self._get_selected_mcp_name()
+                if not server_name: return
                 ag = self.agents.get(self.selected_key)
                 act_m, dis_m = read_mcp_config(ag)
-                sorted_mcps = sorted(list(set(act_m.keys()).union(set(dis_m.keys()))))
-                if 0 <= saved_row < len(sorted_mcps):
-                    server_name = sorted_mcps[saved_row]
-                    active_set = set(act_m.keys())
-                    if server_name in active_set:
-                        active_set.remove(server_name)
-                        new_st = "DISABLED"
-                    else:
-                        active_set.add(server_name)
-                        new_st = "ACTIVE"
-                    save_mcp_servers(ag, active_set)
+                active_set = set(act_m.keys())
+                if server_name in active_set:
+                    active_set.remove(server_name)
+                    new_st = "DISABLED"
+                else:
+                    active_set.add(server_name)
+                    new_st = "ACTIVE"
+                save_mcp_servers(ag, active_set)
+                self.load_active_agent_data()
+                if mcp_table.row_count > 0:
+                    mcp_table.move_cursor(row=min(saved_row, mcp_table.row_count - 1), scroll=False)
+                self.notify(f"MCP server '{server_name}' toggled to {new_st}", title="MCP Server Updated")
+
+        def action_open_mcp_config(self):
+            ag = self.agents.get(self.selected_key)
+            mf = ag.get("mcp_file")
+            if mf and os.path.exists(mf):
+                ok, msg = desktop_open_editor(mf)
+                self.notify(f"Opened {os.path.basename(mf)} in editor", title="MCP Config Opened")
+            else:
+                self.notify(f"No MCP config file found for {ag.get('name')}", title="Config Missing", severity="warning")
+
+        def action_delete_mcp_server(self):
+            server_name = self._get_selected_mcp_name()
+            if not server_name:
+                self.notify("Please select an MCP server in the table first", title="Warning", severity="warning")
+                return
+            ag = self.agents.get(self.selected_key)
+
+            def on_confirm_del(confirmed):
+                if confirmed:
+                    ok, msg = delete_mcp_server(ag, server_name)
                     self.load_active_agent_data()
-                    if mcp_table.row_count > 0:
-                        mcp_table.move_cursor(row=min(saved_row, mcp_table.row_count - 1), scroll=False)
-                    self.notify(f"MCP server '{server_name}' toggled to {new_st}", title="MCP Server Updated")
+                    self.load_global_matrix()
+                    self.notify(msg, title="MCP Server Deleted" if ok else "Delete Failed", severity="warning" if ok else "error")
+
+            self.push_screen(DesktopConfirmModal(
+                "🗑️ Delete MCP Server",
+                f"Permanently remove MCP server '{server_name}' from {ag.get('name')} configuration?\n\nThis cannot be undone.",
+                confirm_label="Remove Server",
+                confirm_variant="error"
+            ), on_confirm_del)
 
         def action_toggle_skill(self):
             s_table = self.query_one("#table-skills", DataTable)
             if s_table.cursor_row is not None and s_table.row_count > 0:
                 saved_row = s_table.cursor_row
+                skill_name = self._get_selected_skill_name()
+                if not skill_name: return
                 ag = self.agents.get(self.selected_key)
                 sd = ag.get("skills_dir")
                 sav = ag.get("skills_available")
@@ -5946,43 +6409,86 @@ if HAS_TEXTUAL:
                 os.makedirs(sd, exist_ok=True)
                 os.makedirs(sav, exist_ok=True)
 
-                act_s, av_s = get_agent_skills(ag)
-                all_s = sorted(list(set(act_s).union(set(av_s))))
-                q = ""
-                try:
-                    q = self.query_one("#skills-filter", Input).value.strip().lower()
-                except Exception:
-                    pass
+                act_p = os.path.join(sd, skill_name)
+                sav_p = os.path.join(sav, skill_name)
 
-                filtered = []
-                for s in all_s:
-                    is_active = (s in act_s)
-                    if self.skill_filter_mode == "active" and not is_active:
-                        continue
-                    if self.skill_filter_mode == "stashed" and is_active:
-                        continue
-                    if q and q not in s.lower():
-                        continue
-                    filtered.append(s)
+                if os.path.exists(act_p):
+                    shutil.move(act_p, sav_p)
+                    st_msg = "STASHED [OFF]"
+                elif os.path.exists(sav_p):
+                    shutil.move(sav_p, act_p)
+                    st_msg = "ACTIVATED [ON]"
+                else:
+                    return
 
-                if 0 <= saved_row < len(filtered):
-                    skill_name = filtered[saved_row]
-                    act_p = os.path.join(sd, skill_name)
-                    sav_p = os.path.join(sav, skill_name)
+                self.populate_skills_table()
+                if s_table.row_count > 0:
+                    s_table.move_cursor(row=min(saved_row, s_table.row_count - 1), scroll=False)
+                self.notify(f"Skill '{skill_name}' is now {st_msg}", title="Skill Updated")
 
-                    if os.path.exists(act_p):
-                        shutil.move(act_p, sav_p)
-                        st_msg = "STASHED [OFF]"
-                    elif os.path.exists(sav_p):
-                        shutil.move(sav_p, act_p)
-                        st_msg = "ACTIVATED [ON]"
-                    else:
-                        return
+        def action_open_skill_file(self):
+            skill_name = self._get_selected_skill_name()
+            if not skill_name:
+                self.notify("Please select a skill in the table first", title="Warning", severity="warning")
+                return
+            ag = self.agents.get(self.selected_key)
+            sd = ag.get("skills_dir")
+            sav = ag.get("skills_available")
+            p = None
+            for base in (sd, sav):
+                if base:
+                    cand = os.path.join(base, skill_name)
+                    if os.path.exists(cand):
+                        p = cand
+                        break
+            if not p:
+                self.notify(f"Skill '{skill_name}' path not found on disk", title="Not Found", severity="error")
+                return
+            md = os.path.join(p, "SKILL.md")
+            if os.path.exists(md):
+                ok, msg = desktop_open_editor(md)
+                self.notify(f"Opened {skill_name}/SKILL.md in editor", title="Skill File")
+            else:
+                ok, msg = desktop_open_explorer(p)
+                self.notify(f"Opened {skill_name} folder in Explorer", title="Skill Folder")
 
-                    self.populate_skills_table()
-                    if s_table.row_count > 0:
-                        s_table.move_cursor(row=min(saved_row, s_table.row_count - 1), scroll=False)
-                    self.notify(f"Skill '{skill_name}' is now {st_msg}", title="Skill Updated")
+        def action_delete_skill_permanent(self):
+            skill_name = self._get_selected_skill_name()
+            if not skill_name:
+                self.notify("Please select a skill in the table first", title="Warning", severity="warning")
+                return
+            ag = self.agents.get(self.selected_key)
+            sd = ag.get("skills_dir")
+            sav = ag.get("skills_available")
+            p = None
+            for base in (sd, sav):
+                if base:
+                    cand = os.path.join(base, skill_name)
+                    if os.path.exists(cand):
+                        p = cand
+                        break
+            if not p:
+                self.notify(f"Skill '{skill_name}' path not found on disk", title="Not Found", severity="error")
+                return
+
+            def on_confirm_del(confirmed):
+                if confirmed:
+                    try:
+                        if os.path.isdir(p):
+                            shutil.rmtree(p)
+                        else:
+                            os.remove(p)
+                        self.populate_skills_table()
+                        self.notify(f"Skill '{skill_name}' permanently deleted", title="Skill Deleted", severity="warning")
+                    except Exception as e:
+                        self.notify(f"Failed to delete skill: {e}", title="Delete Failed", severity="error")
+
+            self.push_screen(DesktopConfirmModal(
+                "🗑️ Delete Skill Permanently",
+                f"Permanently delete skill '{skill_name}' from disk?\n\nPath:\n{p}\n\nThis cannot be undone.",
+                confirm_label="Permanently Delete",
+                confirm_variant="error"
+            ), on_confirm_del)
 
         def action_activate_all_skills(self):
             ag = self.agents.get(self.selected_key)
