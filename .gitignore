@@ -1,0 +1,37 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build and packaging artifacts
+*.egg-info/
+build/
+dist/
+*.egg
+
+# Local user preferences & caches
+.agent_customizer_theme
+.omni_agent_theme
+.local/
+*.bak
+*.tmp
+*.log
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
