@@ -494,6 +494,118 @@ def find_cli_executable(name):
         pass
     return None
 
+# ================= FLEET BLACKLIST & DISABLED AGENT ENGINE =================
+
+DISABLED_AGENTS_FILE = os.path.join(USERPROFILE, ".omni_disabled_agents.json")
+
+def get_disabled_agents():
+    """Retrieve set of agent IDs blacklisted or uninstalled from OmniAgent Manager."""
+    if not os.path.exists(DISABLED_AGENTS_FILE):
+        return set()
+    try:
+        with open(DISABLED_AGENTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return set(data)
+            elif isinstance(data, dict):
+                return set(data.get("disabled", []))
+    except Exception:
+        pass
+    return set()
+
+def save_disabled_agents(disabled_set):
+    """Save set of disabled agent IDs to persistent configuration."""
+    try:
+        with open(DISABLED_AGENTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(list(disabled_set)), f, indent=2)
+        return True
+    except Exception:
+        return False
+
+def get_agent_exclusive_paths(agent_id, agent_cfg=None):
+    """
+    Returns list of private, agent-exclusive paths safe to purge on uninstall.
+    CRITICAL: Never includes shared system folders like AppData/Roaming/Code or USERPROFILE.
+    """
+    exclusive_paths = []
+    known_roots = {
+        "kilo": [os.path.join(USERPROFILE, ".kilo")],
+        "kiro": [os.path.join(USERPROFILE, ".kiro")],
+        "copilot": [os.path.join(USERPROFILE, ".copilot")],
+        "pi": [os.path.join(USERPROFILE, ".pi")],
+        "cline": [
+            os.path.join(USERPROFILE, ".cline"),
+            os.path.join(APPDATA, "Code", "User", "globalStorage", "saoudrizwan.claude-dev"),
+        ],
+        "hermes": [os.path.join(USERPROFILE, ".hermes")],
+        "codex": [os.path.join(USERPROFILE, ".codex")],
+        "opencode": [
+            os.path.join(USERPROFILE, ".config", "opencode"),
+            os.path.join(LOCALAPPDATA, "Programs", "@opencode-aidesktop"),
+            os.path.join(APPDATA, "ai.opencode.desktop"),
+        ],
+        "cursor": [os.path.join(USERPROFILE, ".cursor")],
+        "claude": [os.path.join(USERPROFILE, ".claude")],
+        "claudecode": [os.path.join(USERPROFILE, ".claude")],
+        "antigravity": [os.path.join(USERPROFILE, ".gemini", "antigravity")],
+    }
+    for p in known_roots.get(agent_id, []):
+        if p and os.path.exists(p) and p not in exclusive_paths:
+            exclusive_paths.append(p)
+            
+    if agent_cfg:
+        for k in ("skills_dir", "skills_available"):
+            p = agent_cfg.get(k)
+            if p and os.path.exists(p):
+                norm = os.path.normpath(p).lower()
+                is_safe = False
+                for root in known_roots.get(agent_id, []):
+                    if norm.startswith(os.path.normpath(root).lower()):
+                        is_safe = True
+                        break
+                if is_safe and p not in exclusive_paths:
+                    exclusive_paths.append(p)
+    return exclusive_paths
+
+def disable_agent(agent_id, purge_files=False, agent_cfg=None):
+    """
+    Unregisters/hides an agent from OmniAgent Manager.
+    Optionally purges its exclusive data directories while strictly preserving shared tools.
+    """
+    dis = get_disabled_agents()
+    dis.add(agent_id)
+    save_disabled_agents(dis)
+    
+    purged = []
+    failed = []
+    if purge_files:
+        paths = get_agent_exclusive_paths(agent_id, agent_cfg)
+        for p in paths:
+            try:
+                if os.path.isdir(p):
+                    shutil.rmtree(p)
+                elif os.path.isfile(p):
+                    os.remove(p)
+                purged.append(p)
+            except Exception as e:
+                failed.append(f"{p}: {e}")
+                
+    msg = f"Agent '{agent_id}' removed from active fleet."
+    if purged:
+        msg += f" Purged {len(purged)} private path(s)."
+    if failed:
+        msg += f" (Errors on {len(failed)} path(s))."
+    return True, msg
+
+def enable_agent(agent_id):
+    """Re-enables a previously disabled agent ID."""
+    dis = get_disabled_agents()
+    if agent_id in dis:
+        dis.remove(agent_id)
+        save_disabled_agents(dis)
+        return True, f"Agent '{agent_id}' re-enabled in fleet."
+    return False, f"Agent '{agent_id}' was not disabled."
+
 # ================= DYNAMIC AGENT AUTO-DISCOVERY ENGINE =================
 
 def discover_installed_agents():
@@ -698,6 +810,10 @@ def discover_installed_agents():
             "mcp_file": None,
             "plugins_dir": None
         }
+
+    disabled = get_disabled_agents()
+    for dis_id in disabled:
+        detected.pop(dis_id, None)
 
     return detected
 
@@ -2701,6 +2817,7 @@ def manage_single_agent(agent_cfg, all_agents):
         ("Add New MCP Server", "Add via Raw JSON, Interactive Wizard, or Clone from Agent"),
         ("Manage Plugins", "Interactive checklist of installed plugins"),
         ("Reveal in Windows Explorer", "Open agent directory in File Explorer"),
+        ("Uninstall / Remove Agent", "1-Click purge private files & remove from fleet"),
         ("Back to Master Hub", "Return to main agent selector")
     ]
 
@@ -2741,7 +2858,7 @@ def manage_single_agent(agent_cfg, all_agents):
                     lines.append(f"{indicator}{CLR_WHITE} [{num}] {title:<28}{CLR_RESET}  {CLR_DIM}{desc}{CLR_RESET}")
 
             lines.append("--------------------------------------------------------------------------------")
-            lines.append(f"{CLR_BOLD}Navigation:{CLR_RESET} [↑/↓] Move Cursor  [Enter] Select Option  [1-7/0/M] Jump  [r] Refresh  [Esc/q] Back")
+            lines.append(f"{CLR_BOLD}Navigation:{CLR_RESET} [↑/↓] Move Cursor  [Enter] Select Option  [1-8/0/M/U] Jump  [r] Refresh  [Esc/q] Back")
             lines.append("================================================================================")
 
             render_frame(lines)
@@ -2824,6 +2941,45 @@ def manage_single_agent(agent_cfg, all_agents):
                     p = agent_cfg.get("skills_dir") or agent_cfg.get("mcp_file") or USERPROFILE
                     if os.path.exists(p): os.startfile(os.path.dirname(p) if os.path.isfile(p) else p)
                 elif cursor == 7:
+                    # 1-Click Uninstall / Remove Agent
+                    init_screen()
+                    print(f"{CLR_BOLD}{CLR_RED}================================================================================{CLR_RESET}")
+                    print(f"{CLR_BOLD}{CLR_RED}  UNINSTALL / REMOVE AGENT: {agent_cfg['name'].upper()} ({agent_cfg['id']}){CLR_RESET}")
+                    print(f"{CLR_BOLD}{CLR_RED}================================================================================{CLR_RESET}")
+                    ex_paths = get_agent_exclusive_paths(agent_cfg['id'], agent_cfg)
+                    print(f"\n{CLR_WHITE}Exclusive private disk paths detected:{CLR_RESET}")
+                    if ex_paths:
+                        for ep in ex_paths:
+                            print(f"  {CLR_YELLOW}• {ep}{CLR_RESET}")
+                    else:
+                        print(f"  {CLR_DIM}(No exclusive private directories found){CLR_RESET}")
+                    
+                    print(f"\n{CLR_GREEN}Protected Shared Boundaries:{CLR_RESET}")
+                    print(f"  {CLR_DIM}Shared VS Code, settings.json, mcp.json, git repos, & PATH runtimes are NEVER touched.{CLR_RESET}")
+                    print(f"\n{CLR_BOLD}Choose removal action:{CLR_RESET}")
+                    print(f"  {CLR_RED}[1] 💥 Complete Uninstall (Purge Private Files & Remove from Fleet){CLR_RESET}")
+                    print(f"  {CLR_YELLOW}[2] 🚫 Remove from Fleet Only (Preserve Files on Disk){CLR_RESET}")
+                    print(f"  {CLR_CYAN}[0] ↩️  Cancel (Keep Agent & Return){CLR_RESET}")
+                    
+                    choice = safe_input("\nSelect [1/2/0] (default: 0): ")
+                    if choice == "1":
+                        confirm = safe_input(f"Type 'DELETE' to confirm purging private files for {agent_cfg['name']}: ")
+                        if confirm and confirm.strip().upper() == "DELETE":
+                            ok, msg = disable_agent(agent_cfg['id'], purge_files=True, agent_cfg=agent_cfg)
+                            print(f"\n{CLR_GREEN}✓ {msg}{CLR_RESET}")
+                            time.sleep(1.5)
+                            break
+                        else:
+                            print(f"\n{CLR_YELLOW}Cancelled. No files deleted.{CLR_RESET}")
+                            time.sleep(1.0)
+                    elif choice == "2":
+                        ok, msg = disable_agent(agent_cfg['id'], purge_files=False, agent_cfg=agent_cfg)
+                        print(f"\n{CLR_GREEN}✓ {msg}{CLR_RESET}")
+                        time.sleep(1.5)
+                        break
+                    needs_refresh = True
+                    init_screen()
+                elif cursor == 8:
                     break
             elif key == '1': cursor = 0
             elif key == '2': cursor = 1
@@ -2832,6 +2988,7 @@ def manage_single_agent(agent_cfg, all_agents):
             elif key == '5': cursor = 4
             elif key == '6': cursor = 5
             elif key == '7': cursor = 6
+            elif key == '8' or key.upper() == 'U': cursor = 7
             elif key.upper() == 'M':
                 manage_agent_models(agent_cfg, all_agents)
                 needs_refresh = True
@@ -4558,7 +4715,8 @@ if HAS_TEXTUAL:
             ("preset:security", "🍱 Apply Preset: 🛡️ Security & Audit (Semgrep, Sentry, Git)", "preset"),
             ("preset:minimal", "🍱 Apply Preset: 🪶 Minimal / Lean (Filesystem only)", "preset"),
             ("preset:all_active", "🍱 Apply Preset: ✨ All Active (Enable All Configured)", "preset"),
-            ("preset:broadcast", "⚡ 1-Click Broadcast Active Preset to ALL 11 Agents", "preset_broadcast"),
+            ("preset:broadcast", "⚡ 1-Click Broadcast Active Preset to ALL Agents", "preset_broadcast"),
+            ("tool:uninstall_agent", "🗑️ Uninstall / Remove Active Agent from Fleet", "uninstall_agent"),
             ("tool:sidebar", "◀ Toggle Sidebar Show/Hide [Ctrl+B]", "sidebar"),
             ("tool:health", "⚡ Run Live Health Checks on Active MCP Servers", "health"),
             ("tool:registry", "📦 Open 1-Click MCP Registry Auto-Installer", "registry"),
@@ -4575,11 +4733,6 @@ if HAS_TEXTUAL:
             ("ag:opencode", "🔵 Switch to Agent: OpenCode AI Desktop & CLI", "agent"),
             ("ag:hermes", "🟡 Switch to Agent: Nous Hermes Agent", "agent"),
             ("ag:codex", "🟠 Switch to Agent: OpenAI Codex Agent", "agent"),
-            ("ag:cline", "🟢 Switch to Agent: VS Code & Cline", "agent"),
-            ("ag:pi", "⚪ Switch to Agent: Pi Coding Agent", "agent"),
-            ("ag:copilot", "⚪ Switch to Agent: GitHub Copilot CLI", "agent"),
-            ("ag:kiro", "⚪ Switch to Agent: Kiro Agent", "agent"),
-            ("ag:kilo", "⚪ Switch to Agent: Kilo Agent", "agent"),
         ]
 
         BINDINGS = [
@@ -4685,6 +4838,101 @@ if HAS_TEXTUAL:
                 event.prevent_default()
                 event.stop()
                 self.dismiss(False)
+
+    class DesktopUninstallAgentModal(ModalScreen):
+        CSS = """
+        DesktopUninstallAgentModal {
+            align: center middle;
+        }
+        #uninstall-box {
+            width: 78;
+            height: auto;
+            max-height: 90%;
+            background: $surface;
+            border: round $error;
+            padding: 1 2;
+        }
+        #uninstall-title {
+            text-style: bold;
+            color: $error;
+            margin-bottom: 1;
+        }
+        .section-hdr {
+            text-style: bold;
+            color: $warning;
+            margin-top: 1;
+            margin-bottom: 0;
+        }
+        .path-list {
+            background: $background;
+            padding: 0 1;
+            margin-bottom: 1;
+            height: auto;
+            max-height: 6;
+            overflow-y: auto;
+        }
+        .safe-notice {
+            color: $success;
+            margin-bottom: 1;
+        }
+        .btn-bar {
+            height: 3;
+            margin-top: 1;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+        BINDINGS = [
+            Binding("escape", "dismiss_modal", "Cancel", show=True),
+        ]
+
+        def __init__(self, agent_cfg):
+            super().__init__()
+            self.agent_cfg = agent_cfg
+            self.agent_id = agent_cfg.get("id", "agent")
+            self.agent_name = agent_cfg.get("name", self.agent_id)
+            self.exclusive_paths = get_agent_exclusive_paths(self.agent_id, self.agent_cfg)
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="uninstall-box"):
+                yield Label(f"[bold red]🗑️ UNINSTALL / REMOVE AGENT: {self.agent_name.upper()}[/bold red]", id="uninstall-title")
+                yield Label("[dim]Choose removal level. OmniAgent Manager guarantees shared tools (VS Code, Git, Shells) will NEVER be deleted.[/dim]")
+
+                yield Label("📁 Agent-Exclusive Private Directories (Safe to delete):", classes="section-hdr")
+                if self.exclusive_paths:
+                    p_txt = "\n".join([f"  • {p}" for p in self.exclusive_paths])
+                else:
+                    p_txt = "  • No exclusive disk directories detected."
+                yield Static(p_txt, classes="path-list")
+
+                yield Label("🛡️ Protected Shared Tools (WILL NOT BE TOUCHED):", classes="section-hdr")
+                yield Static("  ✔ Visual Studio Code application, global settings, & extensions\n  ✔ System PATH executables, Git repositories, and shared runtimes", classes="safe-notice")
+
+                with Horizontal(classes="btn-bar"):
+                    yield Button("💥 Complete Uninstall (Purge Files)", id="btn-do-purge", variant="error")
+                    yield Button("Remove from Fleet Only", id="btn-do-hide", variant="warning")
+                    yield Button("Cancel [Esc]", id="btn-un-cancel", variant="default")
+
+        def action_dismiss_modal(self):
+            self.dismiss(None)
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-un-cancel":
+                self.dismiss(None)
+            elif bid == "btn-do-hide":
+                ok, msg = disable_agent(self.agent_id, purge_files=False, agent_cfg=self.agent_cfg)
+                self.dismiss((ok, msg))
+            elif bid == "btn-do-purge":
+                ok, msg = disable_agent(self.agent_id, purge_files=True, agent_cfg=self.agent_cfg)
+                self.dismiss((ok, msg))
+
+        def on_key(self, event):
+            if event.key == "escape":
+                event.prevent_default()
+                event.stop()
+                self.dismiss(None)
 
     class DesktopRegistryModal(ModalScreen):
         CSS = """
@@ -5614,6 +5862,7 @@ if HAS_TEXTUAL:
                         yield Button("💾 Export omni-profile.json", id="btn-side-export", variant="default")
                         yield Button("📥 Import omni-profile.json", id="btn-side-import", variant="default")
                         yield Button("🔄 Refresh All Runtimes", id="btn-side-refresh", variant="default")
+                        yield Button("🗑️ Uninstall Agent", id="btn-uninstall-agent", variant="error")
                         yield Button("◀ Toggle Sidebar [Ctrl+B]", id="btn-toggle-side", variant="default")
 
                 with Vertical(id="workspace"):
@@ -6149,6 +6398,9 @@ if HAS_TEXTUAL:
             elif bid == "btn-side-refresh":
                 self.action_refresh_data()
 
+            elif bid == "btn-uninstall-agent":
+                self.action_uninstall_agent()
+
             elif bid == "btn-set-active":
                 self.action_set_active_model()
 
@@ -6662,8 +6914,55 @@ if HAS_TEXTUAL:
                     self.action_ping_active()
                 elif ctype == "refresh":
                     self.action_refresh_data()
+                elif ctype == "uninstall_agent":
+                    self.action_uninstall_agent()
 
             self.push_screen(DesktopCommandPaletteModal(), handle_palette)
+
+        def update_sidebar_active_class(self):
+            for ak in self.agent_keys:
+                try:
+                    btn = self.query_one(f"#ag-{ak}", Button)
+                    if ak == self.selected_key:
+                        btn.add_class("agent-item-active")
+                    else:
+                        btn.remove_class("agent-item-active")
+                except Exception:
+                    pass
+
+        def rebuild_sidebar_agent_buttons(self):
+            try:
+                scroll = self.query_one("#agent-scroll", VerticalScroll)
+                scroll.remove_children()
+                for k in self.agent_keys:
+                    ag = self.agents[k]
+                    cls = "agent-item agent-item-active" if k == self.selected_key else "agent-item"
+                    scroll.mount(Button(f"● {ag['name'][:18]}", id=f"ag-{k}", classes=cls))
+            except Exception:
+                pass
+
+        def action_uninstall_agent(self):
+            ag = self.agents.get(self.selected_key)
+            if not ag:
+                self.notify("No active agent selected", title="Error", severity="error")
+                return
+
+            def on_uninstalled(result):
+                if result:
+                    ok, msg = result
+                    if ok:
+                        self.agents = discover_installed_agents()
+                        self.agent_keys = list(self.agents.keys())
+                        if self.agent_keys:
+                            self.selected_key = self.agent_keys[0]
+                        else:
+                            self.selected_key = ""
+                        self.rebuild_sidebar_agent_buttons()
+                        self.load_active_agent_data()
+                        self.load_global_matrix()
+                        self.notify(msg, title="Agent Uninstalled", severity="warning")
+
+            self.push_screen(DesktopUninstallAgentModal(ag), on_uninstalled)
 
         def action_open_presets_tab(self):
             self.query_one("#tabs-main", TabbedContent).active = "pane-presets"
