@@ -17,6 +17,10 @@ if /i "%~1"=="--help" goto :launch_app
 if /i "%~1"=="-h" goto :launch_app
 if /i "%~1"=="--version" goto :launch_app
 if /i "%~1"=="-v" goto :launch_app
+if /i "%~1"=="--presets" goto :launch_app
+if /i "%~1"=="--health" goto :launch_app
+if /i "%~1"=="--export" goto :launch_app
+if /i "%~1"=="--import" goto :launch_app
 if /i "%~1"=="--no-admin" (
     shift
     goto :launch_app

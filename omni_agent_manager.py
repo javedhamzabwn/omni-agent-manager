@@ -1,6 +1,13 @@
 import sys
 import os
 
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try: sys.stdout.reconfigure(encoding="utf-8")
+    except Exception: pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try: sys.stderr.reconfigure(encoding="utf-8")
+    except Exception: pass
+
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -10,6 +17,21 @@ import re
 import subprocess
 import urllib.request
 import urllib.error
+import difflib
+import time
+
+try:
+    import httpx
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+
 
 try:
     import tomllib
@@ -23,6 +45,7 @@ except ImportError:
 
 try:
     from textual.app import App, ComposeResult
+    from textual import events
     from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Grid
     from textual.widgets import (
         Header, Footer, Button, Static, Label, Input, DataTable,
@@ -724,20 +747,32 @@ def read_mcp_config(agent_cfg):
                 if is_dis: disabled[k] = v
                 else: active[k] = v
         elif mcp_format == "hermes_yaml":
-            with open(mcp_file, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            in_mcp = False
-            for line in lines:
-                stripped = line.strip()
-                if line.startswith("mcp_servers:"):
-                    in_mcp = True
-                    continue
-                if in_mcp and line and not line.startswith(" ") and not line.startswith("\t") and not stripped.startswith("#"):
-                    break
-                if in_mcp:
-                    m = re.match(r"^(\s{2}|\s{4})([a-zA-Z0-9_\-\.]+):", line)
-                    if m:
-                        active[m.group(2)] = {"raw": True}
+            if yaml:
+                with open(mcp_file, "r", encoding="utf-8") as f:
+                    ydata = yaml.safe_load(f) or {}
+                servers = ydata.get("mcp_servers", {})
+                for k, v in servers.items():
+                    if isinstance(v, dict):
+                        is_dis = not v.get("enabled", True)
+                        if is_dis: disabled[k] = v
+                        else: active[k] = v
+            else:
+                with open(mcp_file, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                in_mcp = False
+                for line in lines:
+                    stripped = line.strip()
+                    if line.startswith("mcp_servers:"):
+                        in_mcp = True
+                        continue
+                    if in_mcp and line and not line.startswith(" ") and not line.startswith("\t") and not stripped.startswith("#"):
+                        break
+                    if in_mcp:
+                        m = re.match(r"^  ([a-zA-Z0-9_\-\.]+):", line)
+                        if m:
+                            sname = m.group(1)
+                            if sname not in ("command", "args", "env", "enabled", "url", "auth", "connect_timeout", "transport", "tools"):
+                                active[sname] = {"raw": True}
     except Exception:
         pass
 
@@ -2758,6 +2793,502 @@ def master_hub():
         init_screen()
         print("Done. Universal Agent Customizer closed.")
 
+
+# ================= ADVANCED MCP WORKSPACES, HEALTH, REGISTRY & PROFILE ENGINES =================
+
+MCP_PRESETS = [
+    {
+        "id": "fullstack",
+        "name": "🌐 Full-Stack Web",
+        "desc": "Filesystem, GitHub, Brave Search, Puppeteer browser automation",
+        "match": ["filesystem", "github", "brave", "puppeteer", "fetch"],
+    },
+    {
+        "id": "datascience",
+        "name": "📊 Data Science & SQL",
+        "desc": "PostgreSQL, SQLite, Filesystem, Memory knowledge graph",
+        "match": ["postgres", "sqlite", "filesystem", "memory", "database"],
+    },
+    {
+        "id": "devops",
+        "name": "🚀 DevOps & Cloud",
+        "desc": "Docker, Kubernetes, AWS, GitHub, Filesystem",
+        "match": ["docker", "kubernetes", "aws", "github", "filesystem"],
+    },
+    {
+        "id": "security",
+        "name": "🛡️ Security & Audit",
+        "desc": "Semgrep, Sentry, GitHub, Filesystem auditing tools",
+        "match": ["security", "semgrep", "sentry", "github", "filesystem"],
+    },
+    {
+        "id": "minimal",
+        "name": "🪶 Minimal / Lean",
+        "desc": "Filesystem only - preserves maximum LLM context window",
+        "match": ["filesystem"],
+    },
+    {
+        "id": "all_active",
+        "name": "✨ All Active",
+        "desc": "Enable all configured MCP servers across agent",
+        "match": ["*"],
+    },
+]
+
+REGISTRY_MCPS = [
+    {
+        "id": "github",
+        "name": "GitHub MCP",
+        "category": "Developer Tools",
+        "desc": "Inspect repos, pull requests, issues, commits, branches, and search code",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env_vars": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/github"
+    },
+    {
+        "id": "postgres",
+        "name": "PostgreSQL Database",
+        "category": "Databases",
+        "desc": "Inspect schemas, execute read-only queries, and analyze Postgres databases",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL}"],
+        "env_vars": ["DATABASE_URL"],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres"
+    },
+    {
+        "id": "sqlite",
+        "name": "SQLite Database",
+        "category": "Databases",
+        "desc": "Query, inspect tables, and interact with local SQLite databases",
+        "command": "uvx",
+        "args": ["mcp-server-sqlite", "--db-path", "${DB_PATH}"],
+        "env_vars": ["DB_PATH"],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/sqlite"
+    },
+    {
+        "id": "brave-search",
+        "name": "Brave Web Search",
+        "category": "Web & Search",
+        "desc": "Web search and local search capabilities using the Brave Search API",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+        "env_vars": ["BRAVE_API_KEY"],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search"
+    },
+    {
+        "id": "filesystem",
+        "name": "Secure Filesystem",
+        "category": "Core System",
+        "desc": "Direct file read/write access with directory allowlist security",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "${ALLOWED_DIR}"],
+        "env_vars": ["ALLOWED_DIR"],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem"
+    },
+    {
+        "id": "docker",
+        "name": "Docker Container Manager",
+        "category": "DevOps",
+        "desc": "Manage containers, images, volumes, and inspect Docker daemon",
+        "command": "uvx",
+        "args": ["mcp-server-docker"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/docker"
+    },
+    {
+        "id": "memory",
+        "name": "Knowledge Graph Memory",
+        "category": "Memory & State",
+        "desc": "Persistent knowledge graph memory system for entities and relations",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-memory"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory"
+    },
+    {
+        "id": "puppeteer",
+        "name": "Puppeteer Web Automation",
+        "category": "Browser Automation",
+        "desc": "Browser automation, web scraping, and JavaScript rendering via Puppeteer",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer"
+    },
+    {
+        "id": "fetch",
+        "name": "Web Fetch & Scraper",
+        "category": "Web & Search",
+        "desc": "Fetch web pages and convert HTML to markdown for LLM consumption",
+        "command": "uvx",
+        "args": ["mcp-server-fetch"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch"
+    },
+    {
+        "id": "sequential-thinking",
+        "name": "Sequential Thinking Reasoning",
+        "category": "Reasoning & Agentic",
+        "desc": "Dynamic step-by-step reasoning and problem-solving tool for complex tasks",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+        "env_vars": [],
+        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking"
+    },
+    {
+        "id": "context-mode",
+        "name": "Context Mode Sandbox",
+        "category": "Sandbox & Optimization",
+        "desc": "Executes analysis inside sandbox and keeps raw bytes out of LLM context",
+        "command": "npx",
+        "args": ["-y", "@context-mode/mcp"],
+        "env_vars": [],
+        "docs": "https://github.com/context-mode"
+    }
+]
+
+def apply_mcp_preset(agent_cfg, preset_id, all_agents=None, broadcast=False):
+    preset = next((p for p in MCP_PRESETS if p["id"] == preset_id), None)
+    if not preset:
+        return False, "Preset not found"
+
+    targets = list(all_agents.values()) if (broadcast and all_agents) else [agent_cfg]
+    modified = []
+
+    for ag in targets:
+        mcp_file = ag.get("mcp_file")
+        if not mcp_file or not os.path.exists(mcp_file):
+            continue
+        act_m, dis_m = read_mcp_config(ag)
+        all_names = sorted(list(set(act_m.keys()).union(set(dis_m.keys()))))
+        if not all_names:
+            continue
+
+        active_set = set()
+        if "*" in preset["match"]:
+            active_set = set(all_names)
+        else:
+            for name in all_names:
+                for pattern in preset["match"]:
+                    if pattern.lower() in name.lower():
+                        active_set.add(name)
+                        break
+
+        # Save backup first
+        try:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            shutil.copy2(mcp_file, f"{mcp_file}.{ts}.bak")
+        except Exception:
+            pass
+
+        save_mcp_servers(ag, active_set)
+        modified.append(ag["name"])
+
+    scope_str = f"broadcasted across {len(modified)} agents" if broadcast else f"applied to {agent_cfg['name']}"
+    return True, f"Preset '{preset['name']}' {scope_str} ({len(modified)} updated)"
+
+def probe_mcp_server_health(server_name, server_def, timeout=2.0):
+    start = time.time()
+    url = server_def.get("url") or server_def.get("endpoint")
+    if url:
+        try:
+            if HAS_HTTPX:
+                resp = httpx.get(url, timeout=timeout)
+                ms = int((time.time() - start) * 1000)
+                if resp.status_code < 400:
+                    return True, ms, f"HTTP {resp.status_code} OK"
+                return False, ms, f"HTTP {resp.status_code}"
+            else:
+                req = urllib.request.Request(url, headers={"User-Agent": "OmniAgent-Health/4.0"})
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    ms = int((time.time() - start) * 1000)
+                    return True, ms, f"HTTP {resp.status} OK"
+        except Exception as e:
+            return False, 0, f"Connect Error: {type(e).__name__}"
+
+    cmd = server_def.get("command")
+    args = list(server_def.get("args", []))
+    if isinstance(cmd, (list, tuple)):
+        if not cmd:
+            return False, 0, "Empty command list"
+        args = list(cmd[1:]) + args
+        cmd = cmd[0]
+
+    if not cmd or not isinstance(cmd, str):
+        return False, 0, "No command configured"
+
+    bin_path = shutil.which(cmd)
+    if not bin_path:
+        return False, 0, f"Binary '{cmd}' not found in PATH"
+
+    try:
+        proc = subprocess.Popen(
+            [bin_path] + list(args),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        ping_payload = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"omni-probe","version":"1.0"}}}\n'
+        try:
+            stdout, _ = proc.communicate(input=ping_payload, timeout=timeout)
+            ms = int((time.time() - start) * 1000)
+            if "jsonrpc" in stdout:
+                return True, ms, "JSON-RPC Handshake OK"
+            elif proc.returncode == 0:
+                return True, ms, "Exited Cleanly (0)"
+            else:
+                return False, ms, f"Exit Code {proc.returncode}"
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            ms = int((time.time() - start) * 1000)
+            return True, ms, "Active (Listening on Stdio)"
+    except Exception as e:
+        return False, 0, str(e)
+
+def list_agent_backups(agent_cfg):
+    backups = []
+    dirs_to_check = set()
+    mcp_file = agent_cfg.get("mcp_file")
+    if mcp_file:
+        dirs_to_check.add(os.path.dirname(mcp_file))
+    skills_dir = agent_cfg.get("skills_dir")
+    if skills_dir:
+        dirs_to_check.add(skills_dir)
+        dirs_to_check.add(os.path.dirname(skills_dir))
+
+    for d in dirs_to_check:
+        if not os.path.exists(d): continue
+        try:
+            for entry in os.scandir(d):
+                if entry.is_file() and entry.name.endswith(".bak"):
+                    st = entry.stat()
+                    mtime_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime))
+                    backups.append({
+                        "path": entry.path,
+                        "name": entry.name,
+                        "dir": d,
+                        "mtime": mtime_str,
+                        "raw_mtime": st.st_mtime,
+                        "size_bytes": st.st_size,
+                        "target_name": entry.name.split(".")[0]
+                    })
+        except Exception:
+            pass
+
+    backups.sort(key=lambda x: x["raw_mtime"], reverse=True)
+    return backups
+
+def restore_backup_file(backup_path, target_path=None):
+    if not os.path.exists(backup_path):
+        return False, "Backup file not found"
+    
+    if not target_path:
+        d = os.path.dirname(backup_path)
+        base = os.path.basename(backup_path)
+        parts = base.split(".")
+        if len(parts) >= 3 and parts[-1] == "bak":
+            target_name = ".".join(parts[:-2])
+            target_path = os.path.join(d, target_name)
+        else:
+            target_path = backup_path[:-4]
+
+    try:
+        if os.path.exists(target_path):
+            safety = f"{target_path}.pre_restore_{int(time.time())}.bak"
+            shutil.copy2(target_path, safety)
+        shutil.copy2(backup_path, target_path)
+        return True, f"Successfully restored to {os.path.basename(target_path)}"
+    except Exception as e:
+        return False, f"Restore failed: {e}"
+
+def calculate_agent_tools_token_metrics(agent_cfg):
+    act_m, _ = read_mcp_config(agent_cfg)
+    raw_str = json.dumps(act_m)
+    est_tokens = max(10, int(len(raw_str) / 3.85)) if act_m else 0
+    max_context = 128000
+    headroom = max(0, max_context - est_tokens)
+    pct = min(100.0, (est_tokens / max_context) * 100)
+    
+    cost_claude = est_tokens * 0.000003
+    cost_deepseek = est_tokens * 0.00000055
+    cost_gpt4o = est_tokens * 0.0000025
+
+    total_blocks = 14
+    filled = min(total_blocks, max(0, int((pct / 100.0) * total_blocks)))
+    bar = "█" * filled + "░" * (total_blocks - filled)
+
+    return {
+        "tokens": est_tokens,
+        "servers_count": len(act_m),
+        "headroom": headroom,
+        "pct_used": pct,
+        "bar": bar,
+        "cost_claude": cost_claude,
+        "cost_deepseek": cost_deepseek,
+        "cost_gpt4o": cost_gpt4o
+    }
+
+def export_omni_profile(agents, out_path="omni-profile.json"):
+    if not os.path.isabs(out_path):
+        cwd = os.getcwd()
+        try:
+            test_file = os.path.join(cwd, ".test_perm.tmp")
+            with open(test_file, "w") as tf: tf.write("ok")
+            os.remove(test_file)
+            out_path = os.path.join(cwd, out_path)
+        except Exception:
+            out_path = os.path.join(USERPROFILE, out_path)
+
+    bundle = {
+        "version": "4.0.0",
+        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "agents": {}
+    }
+    for k, ag in agents.items():
+        m_info = get_agent_models_and_providers(ag)
+        act_s, _ = get_agent_skills(ag)
+        act_m, _ = read_mcp_config(ag)
+        bundle["agents"][k] = {
+            "name": ag["name"],
+            "active_model": m_info["active_model"],
+            "active_provider": m_info["active_provider"],
+            "base_url": m_info["base_url"],
+            "active_skills": act_s,
+            "active_mcps": list(act_m.keys())
+        }
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(bundle, f, indent=2)
+    return True, f"Profile exported to {os.path.abspath(out_path)}"
+
+def import_omni_profile(agents, in_path="omni-profile.json"):
+    if not os.path.isabs(in_path) and not os.path.exists(in_path):
+        cand = os.path.join(USERPROFILE, in_path)
+        if os.path.exists(cand):
+            in_path = cand
+
+    if not os.path.exists(in_path):
+        return False, f"Profile file not found: {in_path}"
+    with open(in_path, "r", encoding="utf-8") as f:
+        bundle = json.load(f)
+
+    imported_agents = bundle.get("agents", {})
+    count = 0
+    for k, data in imported_agents.items():
+        ag = agents.get(k)
+        if not ag: continue
+        if data.get("active_model"):
+            set_agent_active_model(ag, data["active_model"], provider_id=data.get("active_provider"))
+        if "active_mcps" in data:
+            save_mcp_servers(ag, set(data["active_mcps"]))
+        count += 1
+
+    return True, f"Imported configuration settings for {count} agents"
+
+def install_registry_mcp(mcp_def, env_values, target_agents):
+    mcp_id = mcp_def["id"]
+    args = []
+    for a in mcp_def.get("args", []):
+        arg_val = a
+        for ev, val in env_values.items():
+            arg_val = arg_val.replace(f"${{{ev}}}", val)
+        args.append(arg_val)
+
+    env_dict = {}
+    for ev in mcp_def.get("env_vars", []):
+        if ev in env_values and env_values[ev]:
+            env_dict[ev] = env_values[ev]
+
+    installed_count = 0
+    for ag in target_agents:
+        mcp_file = ag.get("mcp_file")
+        if not mcp_file:
+            continue
+        try:
+            os.makedirs(os.path.dirname(mcp_file), exist_ok=True)
+            data = {}
+            if os.path.exists(mcp_file):
+                # Save backup
+                ts = time.strftime("%Y%m%d_%H%M%S")
+                shutil.copy2(mcp_file, f"{mcp_file}.{ts}.bak")
+                with open(mcp_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+            if "mcpServers" not in data:
+                data["mcpServers"] = {}
+
+            entry = {
+                "command": mcp_def["command"],
+                "args": args,
+                "disabled": False,
+                "enabled": True
+            }
+            if env_dict:
+                entry["env"] = env_dict
+
+            data["mcpServers"][mcp_id] = entry
+
+            with open(mcp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+            installed_count += 1
+        except Exception:
+            pass
+
+    return installed_count > 0, f"Installed {mcp_def['name']} to {installed_count} agents"
+
+def install_online_skill(source_type, source_val, target_agent, skill_name=None):
+    dest_dir = target_agent.get("skills_dir")
+    if not dest_dir:
+        return False, "Target agent has no skills directory configured"
+
+    os.makedirs(dest_dir, exist_ok=True)
+
+    if source_type == "git":
+        repo_name = skill_name or source_val.rstrip("/").split("/")[-1].replace(".git", "")
+        target_folder = os.path.join(dest_dir, repo_name)
+        if os.path.exists(target_folder):
+            return False, f"Skill folder '{repo_name}' already exists"
+        try:
+            res = subprocess.run(["git", "clone", "--depth", "1", source_val, target_folder], capture_output=True, text=True, timeout=30)
+            if res.returncode == 0:
+                return True, f"Successfully cloned skill '{repo_name}'"
+            return False, f"Git clone failed: {res.stderr[:200]}"
+        except Exception as e:
+            return False, f"Git error: {e}"
+
+    elif source_type == "url":
+        s_name = skill_name or "custom_downloaded_skill"
+        target_folder = os.path.join(dest_dir, s_name)
+        os.makedirs(target_folder, exist_ok=True)
+        target_file = os.path.join(target_folder, "SKILL.md")
+        try:
+            if HAS_HTTPX:
+                resp = httpx.get(source_val, timeout=15)
+                content = resp.text
+            else:
+                with urllib.request.urlopen(source_val, timeout=15) as resp:
+                    content = resp.read().decode("utf-8")
+            with open(target_file, "w", encoding="utf-8") as f:
+                f.write(content)
+            return True, f"Downloaded skill to '{s_name}/SKILL.md'"
+        except Exception as e:
+            return False, f"Download failed: {e}"
+
+    elif source_type == "npx":
+        pkg = source_val.strip()
+        try:
+            res = subprocess.run(["npx", "-y", pkg], capture_output=True, text=True, timeout=45)
+            if res.returncode == 0:
+                return True, f"Executed npx command for '{pkg}'"
+            return False, f"npx execution failed: {res.stderr[:200]}"
+        except Exception as e:
+            return False, f"npx error: {e}"
+
+    return False, f"Unknown source type: {source_type}"
+
+
 # ================= TEXTUAL DESKTOP-GRADE TUI APPLICATION =================
 
 THEME_FILE = os.path.join(AI_PROJECTS, ".agent_customizer_theme")
@@ -3130,9 +3661,304 @@ if HAS_TEXTUAL:
                 else:
                     self.dismiss(None)
 
+
+    class DesktopCommandPaletteModal(ModalScreen):
+        CSS = """
+        DesktopCommandPaletteModal {
+            align: center top;
+            padding-top: 3;
+        }
+        #palette-box {
+            width: 78;
+            height: auto;
+            max-height: 80%;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #palette-input {
+            margin-bottom: 1;
+            border: round $primary;
+            background: $surface;
+        }
+        #palette-list {
+            height: 14;
+            border: round $panel;
+            background: $panel 20%;
+        }
+        #palette-hint {
+            margin-top: 1;
+            color: $text-muted;
+            text-align: center;
+        }
+        """
+
+        COMMANDS = [
+            ("tab:models", "📑 Go to Tab: 🤖 AI Models & Providers", "tab"),
+            ("tab:skills", "📑 Go to Tab: ⚡ Skills Management Hub", "tab"),
+            ("tab:mcps", "📑 Go to Tab: 🔌 MCP Tool Servers", "tab"),
+            ("tab:presets", "📑 Go to Tab: 🍱 MCP Presets & Workspaces", "tab"),
+            ("tab:explorer", "📑 Go to Tab: 📂 20-Category Agent Explorer", "tab"),
+            ("tab:global", "📑 Go to Tab: 🌐 Universal Fleet Matrix", "tab"),
+            ("preset:fullstack", "🍱 Apply Preset: 🌐 Full-Stack Web (Git, Brave, Puppeteer)", "preset"),
+            ("preset:datascience", "🍱 Apply Preset: 📊 Data Science & SQL (Postgres, SQLite, Memory)", "preset"),
+            ("preset:devops", "🍱 Apply Preset: 🚀 DevOps & Cloud (Docker, Kubernetes, AWS)", "preset"),
+            ("preset:security", "🍱 Apply Preset: 🛡️ Security & Audit (Semgrep, Sentry, Git)", "preset"),
+            ("preset:minimal", "🍱 Apply Preset: 🪶 Minimal / Lean (Filesystem only)", "preset"),
+            ("preset:all_active", "🍱 Apply Preset: ✨ All Active (Enable All Configured)", "preset"),
+            ("preset:broadcast", "⚡ 1-Click Broadcast Active Preset to ALL 11 Agents", "preset_broadcast"),
+            ("tool:health", "⚡ Run Live Health Checks on Active MCP Servers", "health"),
+            ("tool:registry", "📦 Open 1-Click MCP Registry Auto-Installer", "registry"),
+            ("tool:skill_install", "🌐 Install Online Skill (GitHub clone / URL)", "skill_install"),
+            ("tool:restore", "↺ 1-Click Restore .bak Configuration Backup", "restore"),
+            ("tool:export", "💾 Export Fleet Bundle to omni-profile.json", "export"),
+            ("tool:import", "📥 Import Fleet Bundle from omni-profile.json", "import"),
+            ("tool:theme", "🎨 Open Desktop Palette & Themes [T]", "theme"),
+            ("tool:ping", "⚡ Ping Test Active Model API Endpoint [P]", "ping"),
+            ("tool:refresh", "🔄 Refresh All Runtimes and Disk Data [R]", "refresh"),
+            ("ag:antigravity", "🟢 Switch to Agent: Google Antigravity", "agent"),
+            ("ag:claude", "🟣 Switch to Agent: Claude Code CLI & Desktop", "agent"),
+            ("ag:cursor", "⚪ Switch to Agent: Cursor IDE", "agent"),
+            ("ag:opencode", "🔵 Switch to Agent: OpenCode AI Desktop & CLI", "agent"),
+            ("ag:hermes", "🟡 Switch to Agent: Nous Hermes Agent", "agent"),
+            ("ag:codex", "🟠 Switch to Agent: OpenAI Codex Agent", "agent"),
+            ("ag:cline", "🟢 Switch to Agent: VS Code & Cline", "agent"),
+            ("ag:pi", "⚪ Switch to Agent: Pi Coding Agent", "agent"),
+            ("ag:copilot", "⚪ Switch to Agent: GitHub Copilot CLI", "agent"),
+            ("ag:kiro", "⚪ Switch to Agent: Kiro Agent", "agent"),
+            ("ag:kilo", "⚪ Switch to Agent: Kilo Agent", "agent"),
+        ]
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="palette-box"):
+                yield Label("[b cyan]⚡ FUZZY COMMAND PALETTE[/b cyan]  [dim](LazyGit / VS Code pattern)[/dim]")
+                yield Input(placeholder="🔍 Type to search commands, tabs, presets, tools, or agents...", id="palette-input")
+                yield OptionList(id="palette-list")
+                yield Label("[dim]↑/↓ Navigate  •  Enter Execute  •  Esc Close[/dim]", id="palette-hint")
+
+        def on_mount(self):
+            self.filter_commands("")
+            self.query_one("#palette-input", Input).focus()
+
+        def on_input_changed(self, event: Input.Changed):
+            self.filter_commands(event.value.strip().lower())
+
+        def filter_commands(self, q: str):
+            opt_list = self.query_one("#palette-list", OptionList)
+            opt_list.clear_options()
+            self.current_filtered = []
+            for cid, label, ctype in self.COMMANDS:
+                if not q or q in label.lower() or q in cid.lower():
+                    opt_list.add_option(label)
+                    self.current_filtered.append((cid, label, ctype))
+
+        def on_option_list_option_selected(self, event: OptionList.OptionSelected):
+            idx = event.option_index
+            if 0 <= idx < len(self.current_filtered):
+                cmd_item = self.current_filtered[idx]
+                self.dismiss(cmd_item)
+
+    class DesktopRegistryModal(ModalScreen):
+        CSS = """
+        DesktopRegistryModal {
+            align: center middle;
+        }
+        #reg-box {
+            width: 88;
+            height: auto;
+            max-height: 85%;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #reg-table {
+            height: 11;
+            margin-top: 1;
+            margin-bottom: 1;
+            border: round $panel;
+            background: $surface;
+        }
+        #reg-env-input {
+            margin-bottom: 1;
+            border: round $primary;
+            background: $surface;
+        }
+        .btn-bar {
+            height: 3;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+
+        def __init__(self, target_agent, all_agents):
+            super().__init__()
+            self.target_agent = target_agent
+            self.all_agents = all_agents
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="reg-box"):
+                yield Label("[b cyan]📦 1-CLICK MCP REGISTRY AUTO-INSTALLER[/b cyan]")
+                yield Label(f"[dim]Install verified MCP servers to [b]{self.target_agent['name']}[/b] or fleet-wide:[/dim]")
+                yield DataTable(id="reg-table")
+                yield Input(placeholder="🔑 Env Var / Param (e.g. GITHUB_TOKEN or BRAVE_API_KEY if needed)...", id="reg-env-input")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("Install to Active Agent", id="btn-reg-active", variant="success")
+                    yield Button("⚡ Install to ALL 11 Agents", id="btn-reg-all", variant="primary")
+                    yield Button("Cancel", id="btn-reg-cancel", variant="default")
+
+        def on_mount(self):
+            table = self.query_one("#reg-table", DataTable)
+            table.clear(columns=True)
+            table.add_columns("Category", "Server Name", "Package / Command", "Description")
+            table.cursor_type = "row"
+            for idx, item in enumerate(REGISTRY_MCPS):
+                table.add_row(item["category"], item["name"], f"{item['command']} {' '.join(item['args'][:2])}", item["desc"][:42], key=f"r-{idx}")
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-reg-cancel":
+                self.dismiss(None)
+                return
+
+            table = self.query_one("#reg-table", DataTable)
+            if table.cursor_row is None or not (0 <= table.cursor_row < len(REGISTRY_MCPS)):
+                self.dismiss(None)
+                return
+
+            mcp_def = REGISTRY_MCPS[table.cursor_row]
+            env_val = self.query_one("#reg-env-input", Input).value.strip()
+            env_map = {}
+            if mcp_def.get("env_vars") and env_val:
+                for ev in mcp_def["env_vars"]:
+                    env_map[ev] = env_val
+
+            targets = list(self.all_agents.values()) if bid == "btn-reg-all" else [self.target_agent]
+            ok, msg = install_registry_mcp(mcp_def, env_map, targets)
+            self.dismiss((ok, msg))
+
+    class DesktopRestoreModal(ModalScreen):
+        CSS = """
+        DesktopRestoreModal {
+            align: center middle;
+        }
+        #res-box {
+            width: 82;
+            height: auto;
+            max-height: 85%;
+            background: $surface;
+            border: round $error;
+            padding: 1 2;
+        }
+        #res-table {
+            height: 11;
+            margin-top: 1;
+            margin-bottom: 1;
+            border: round $panel;
+            background: $surface;
+        }
+        .btn-bar {
+            height: 3;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+
+        def __init__(self, target_agent):
+            super().__init__()
+            self.target_agent = target_agent
+            self.backups = list_agent_backups(target_agent)
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="res-box"):
+                yield Label(f"[b red]↺ CONFIG BACKUP ROLLBACK MANAGER[/b red] - [b]{self.target_agent['name']}[/b]")
+                yield Label("[dim]Select a historical timestamped snapshot to restore immediately:[/dim]")
+                yield DataTable(id="res-table")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("↺ Restore Selected Backup", id="btn-do-restore", variant="error")
+                    yield Button("Cancel", id="btn-res-cancel", variant="default")
+
+        def on_mount(self):
+            table = self.query_one("#res-table", DataTable)
+            table.clear(columns=True)
+            table.add_columns("Backup File", "Timestamp", "Size", "Directory")
+            table.cursor_type = "row"
+            for idx, b in enumerate(self.backups):
+                sz_str = f"{b['size_bytes']} B" if b['size_bytes'] < 1024 else f"{b['size_bytes']//1024} KB"
+                table.add_row(b["name"][:30], b["mtime"], sz_str, b["dir"][-28:], key=f"b-{idx}")
+
+        def on_button_pressed(self, event: Button.Pressed):
+            if event.button.id == "btn-res-cancel":
+                self.dismiss(None)
+                return
+            elif event.button.id == "btn-do-restore":
+                table = self.query_one("#res-table", DataTable)
+                if table.cursor_row is not None and 0 <= table.cursor_row < len(self.backups):
+                    b = self.backups[table.cursor_row]
+                    ok, msg = restore_backup_file(b["path"])
+                    self.dismiss((ok, msg))
+                else:
+                    self.dismiss(None)
+
+    class DesktopSkillInstallModal(ModalScreen):
+        CSS = """
+        DesktopSkillInstallModal {
+            align: center middle;
+        }
+        #skill-box {
+            width: 74;
+            height: auto;
+            max-height: 85%;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #skill-url-input {
+            margin-top: 1;
+            margin-bottom: 1;
+            border: round $primary;
+            background: $surface;
+        }
+        .btn-bar {
+            height: 3;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+
+        def __init__(self, target_agent):
+            super().__init__()
+            self.target_agent = target_agent
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="skill-box"):
+                yield Label(f"[b green]🌐 ONLINE SKILL & PLUGIN AUTO-INSTALLER[/b green]")
+                yield Label(f"[dim]Install skill into [b]{self.target_agent['name']}[/b]:[/dim]")
+                yield Input(placeholder="🔗 GitHub URL (e.g. https://github.com/org/skill) or raw SKILL.md URL...", id="skill-url-input")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("Git Clone Skill", id="btn-skill-git", variant="success")
+                    yield Button("Download SKILL.md", id="btn-skill-url", variant="primary")
+                    yield Button("Cancel", id="btn-skill-cancel", variant="default")
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-skill-cancel":
+                self.dismiss(None)
+                return
+            val = self.query_one("#skill-url-input", Input).value.strip()
+            if not val:
+                self.dismiss((False, "Empty URL provided"))
+                return
+
+            stype = "git" if bid == "btn-skill-git" else "url"
+            ok, msg = install_online_skill(stype, val, self.target_agent)
+            self.dismiss((ok, msg))
+
     class AgentCustomizerDesktopApp(App):
         TITLE = "OmniAgent Manager"
-        SUB_TITLE = "Universal AI Coding Agent Control Hub v3.5"
+        SUB_TITLE = "Universal AI Coding Agent Control Hub v4.0"
         CSS = """
         Screen {
             background: $background;
@@ -3190,6 +4016,14 @@ if HAS_TEXTUAL:
             padding: 0 1;
             background: $background;
         }
+        #lbl-token-gauge {
+            background: $surface;
+            border: round $primary 40%;
+            padding: 0 1;
+            margin-bottom: 1;
+            height: 3;
+            content-align: center middle;
+        }
         .desktop-card {
             background: $surface;
             border: round $primary 40%;
@@ -3234,14 +4068,18 @@ if HAS_TEXTUAL:
         """
 
         BINDINGS = [
-            Binding("q", "quit", "Quit", show=True),
-            Binding("r", "refresh_data", "Refresh", show=True),
-            Binding("t", "open_theme_modal", "Themes [T]", show=True),
+            Binding("ctrl+p", "open_command_palette", "Palette [Ctrl+P]", show=True),
+            Binding("f1", "open_command_palette", "Palette", show=False),
+            Binding("w", "open_presets_tab", "Workspaces [W]", show=True),
             Binding("m", "open_models_tab", "Models", show=True),
             Binding("s", "open_skills_tab", "Skills", show=True),
             Binding("c", "open_mcps_tab", "MCPs", show=True),
             Binding("f", "open_explorer_tab", "Folders", show=True),
+            Binding("t", "open_theme_modal", "Themes [T]", show=True),
             Binding("p", "ping_active", "Ping Test", show=True),
+            Binding("r", "refresh_data", "Refresh", show=True),
+            Binding("ctrl+r", "open_restore_modal", "Restore .bak", show=False),
+            Binding("q", "quit", "Quit", show=True),
         ]
 
         def __init__(self):
@@ -3251,6 +4089,7 @@ if HAS_TEXTUAL:
             self.selected_key = self.agent_keys[0] if self.agent_keys else "antigravity"
             self.cached_skills = []
             self.active_explorer_cat = "1"
+            self.mcp_health_cache = {}
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
@@ -3263,12 +4102,16 @@ if HAS_TEXTUAL:
                             cls = "agent-item agent-item-active" if k == self.selected_key else "agent-item"
                             yield Button(f"● {ag['name'][:18]}", id=f"ag-{k}", classes=cls)
                     with Vertical(id="sidebar-footer"):
+                        yield Button("⚡ Command Palette [Ctrl+P]", id="btn-side-palette", variant="success")
                         yield Button("🎨 Switch Theme [T]", id="btn-side-theme", variant="default")
                         yield Button("📂 Explore Agent Folders", id="btn-side-folders", variant="primary")
                         yield Button("🌐 1-Click Deploy Provider", id="btn-side-deploy", variant="warning")
+                        yield Button("💾 Export omni-profile.json", id="btn-side-export", variant="default")
+                        yield Button("📥 Import omni-profile.json", id="btn-side-import", variant="default")
                         yield Button("🔄 Refresh All Runtimes", id="btn-side-refresh", variant="default")
 
                 with Vertical(id="workspace"):
+                    yield Label("[dim]Calculating tool context overhead...[/dim]", id="lbl-token-gauge")
                     with TabbedContent(id="tabs-main"):
                         with TabPane("🤖 AI Models & Providers", id="pane-models"):
                             with Vertical(classes="desktop-card", id="card-models"):
@@ -3288,14 +4131,27 @@ if HAS_TEXTUAL:
                                 yield Button("⇄ Toggle Selected [Space]", id="btn-skill-toggle", variant="primary")
                                 yield Button("✔ Activate All", id="btn-skill-all", variant="success")
                                 yield Button("✖ Stash All", id="btn-skill-none", variant="error")
+                                yield Button("🌐 Install Online Skill", id="btn-online-skill", variant="warning")
                                 yield Button("📦 Warehouses", id="btn-warehouses", variant="default")
                             yield DataTable(id="table-skills")
 
                         with TabPane("🔌 MCP Tool Servers", id="pane-mcps"):
                             with Horizontal(classes="action-bar"):
                                 yield Button("⇄ Toggle Selected [Space]", id="btn-toggle-mcp", variant="primary")
-                                yield Button("+ Add MCP Server", id="btn-add-mcp", variant="success")
+                                yield Button("⚡ Run Health Checks", id="btn-health-check", variant="warning")
+                                yield Button("📦 1-Click Registry", id="btn-open-registry", variant="success")
+                                yield Button("↺ Restore .bak", id="btn-restore-bak", variant="error")
+                                yield Button("+ Add MCP Server", id="btn-add-mcp", variant="default")
                             yield DataTable(id="table-mcps")
+
+                        with TabPane("🍱 MCP Presets & Workspaces", id="pane-presets"):
+                            with Vertical(classes="desktop-card"):
+                                yield Label("[b cyan]🍱 Task-Based MCP Workspaces & Fleet Synchronization[/b cyan]")
+                                yield Label("[dim]Switch active tool profiles across the selected agent or broadcast across all 11 agents simultaneously[/dim]")
+                            with Horizontal(classes="action-bar"):
+                                yield Button("Apply to Active Agent", id="btn-apply-preset", variant="primary")
+                                yield Button("⚡ 1-Click Broadcast All 11 Agents", id="btn-broadcast-preset", variant="success")
+                            yield DataTable(id="table-presets")
 
                         with TabPane("📂 Agent Explorer", id="pane-explorer"):
                             with Horizontal(classes="action-bar"):
@@ -3331,9 +4187,37 @@ if HAS_TEXTUAL:
             self.load_global_matrix()
             self.init_explorer_categories()
 
+        def on_resize(self, event: events.Resize) -> None:
+            try:
+                sidebar = self.query_one("#sidebar")
+                if event.size.width < 95:
+                    sidebar.styles.width = 10
+                    for k in self.agent_keys:
+                        btn = self.query_one(f"#ag-{k}", Button)
+                        btn.label = f"● {k[:3].upper()}"
+                else:
+                    sidebar.styles.width = 33
+                    for k in self.agent_keys:
+                        btn = self.query_one(f"#ag-{k}", Button)
+                        name = self.agents[k]["name"][:18]
+                        btn.label = f"● {name}"
+            except Exception:
+                pass
+
         def load_active_agent_data(self):
             ag = self.agents.get(self.selected_key)
             if not ag: return
+
+            # 0. Live Token & Cost Context Overhead Gauge
+            try:
+                tm = calculate_agent_tools_token_metrics(ag)
+                self.query_one("#lbl-token-gauge", Label).update(
+                    f"[b green]Tools Context Overhead:[/b green] {tm['tokens']:,} tokens ({tm['pct_used']:.1f}% of 128k)  "
+                    f"[{tm['bar']}]  [b cyan]Headroom:[/b cyan] {tm['headroom']:,} tokens free  "
+                    f"[b yellow]Est. Cost:[/b yellow] ~${tm['cost_claude']:.4f}/req (Claude 3.5) | ~${tm['cost_deepseek']:.5f}/req (DeepSeek)"
+                )
+            except Exception:
+                pass
 
             # 1. Update Models Tab
             m_info = get_agent_models_and_providers(ag)
@@ -3383,17 +4267,41 @@ if HAS_TEXTUAL:
             act_m, dis_m = read_mcp_config(ag)
             mcp_table = self.query_one("#table-mcps", DataTable)
             mcp_table.clear(columns=True)
-            mcp_table.add_columns("Status", "Server Name", "Command / Protocol", "Quick Action")
+            mcp_table.add_columns("Status", "Server Name", "Health / Latency", "Command / Protocol", "Quick Action")
             mcp_table.cursor_type = "row"
             sorted_mcps = sorted(list(set(act_m.keys()).union(set(dis_m.keys()))))
             for idx, m in enumerate(sorted_mcps):
+                health_info = self.mcp_health_cache.get(m)
+                if health_info:
+                    h_ok, h_ms, h_msg = health_info
+                    h_badge = f"[bold #a6e3a1]● LIVE ({h_ms}ms)[/bold #a6e3a1]" if h_ok else f"[bold #fab387]⚠ {h_msg[:12]}[/bold #fab387]"
+                else:
+                    h_badge = "[dim]— Unchecked[/dim]"
+
                 if m in act_m:
                     st = "[bold #a6e3a1]  ● ACTIVE [ON]   [/bold #a6e3a1]"
                     act_text = "[bold #89b4fa] [ ⇄ Click / Space ] [/bold #89b4fa]"
                 else:
                     st = "[dim #6c7086]  ○ DISABLED [OFF] [/dim #6c7086]"
                     act_text = "[bold #a6e3a1] [ ⇄ Click / Space ] [/bold #a6e3a1]"
-                mcp_table.add_row(st, m, "Stdio / SSE", act_text, key=f"mcp-{idx}")
+                mcp_table.add_row(st, m, h_badge, "Stdio / SSE", act_text, key=f"mcp-{idx}")
+
+            # Populate MCP Presets Table
+            try:
+                p_table = self.query_one("#table-presets", DataTable)
+                p_table.clear(columns=True)
+                p_table.add_columns("Preset Name", "Target Tools / Matchers", "Description", "Quick Action")
+                p_table.cursor_type = "row"
+                for p_idx, pr in enumerate(MCP_PRESETS):
+                    p_table.add_row(
+                        f"[b]{pr['name']}[/b]",
+                        ", ".join(pr["match"]),
+                        pr["desc"],
+                        "[bold #a6e3a1] [ Apply / Space ] [/bold #a6e3a1]",
+                        key=f"preset-{p_idx}"
+                    )
+            except Exception:
+                pass
 
             if saved_mcp_row is not None and mcp_table.row_count > 0:
                 mcp_table.move_cursor(row=min(saved_mcp_row, mcp_table.row_count - 1), scroll=False)
@@ -3612,6 +4520,8 @@ if HAS_TEXTUAL:
                     self.load_active_agent_data()
                     self.load_global_matrix()
                     self.notify(f"Active model switched to: {model_id}", title="Model Changed")
+            elif tid == "table-presets":
+                self.action_apply_preset()
             elif tid == "table-mcps":
                 self.action_toggle_mcp()
             elif tid == "table-skills":
@@ -3796,12 +4706,140 @@ if HAS_TEXTUAL:
             m_info = get_agent_models_and_providers(ag)
             self.push_screen(DesktopPingModal(m_info["base_url"]))
 
+
+        def action_open_command_palette(self):
+            def handle_palette(cmd_item):
+                if not cmd_item: return
+                cid, label, ctype = cmd_item
+                if ctype == "tab":
+                    tab_id = f"pane-{cid.split(':')[1]}"
+                    try: self.query_one("#tabs-main", TabbedContent).active = tab_id
+                    except Exception: pass
+                elif ctype == "agent":
+                    ag_id = cid.split(":")[1]
+                    self.selected_key = ag_id
+                    self.update_sidebar_active_class()
+                    self.load_active_agent_data()
+                    self.notify(f"Switched active agent to: {self.agents[ag_id]['name']}", title="Agent Switched")
+                elif ctype == "preset":
+                    preset_id = cid.split(":")[1]
+                    ag = self.agents.get(self.selected_key)
+                    ok, msg = apply_mcp_preset(ag, preset_id, all_agents=self.agents, broadcast=False)
+                    self.load_active_agent_data()
+                    self.notify(msg, title="Preset Applied", severity="information" if ok else "error")
+                elif ctype == "preset_broadcast":
+                    p_table = self.query_one("#table-presets", DataTable)
+                    cur_idx = p_table.cursor_row if (p_table.cursor_row is not None and 0 <= p_table.cursor_row < len(MCP_PRESETS)) else 0
+                    preset_id = MCP_PRESETS[cur_idx]["id"]
+                    ag = self.agents.get(self.selected_key)
+                    ok, msg = apply_mcp_preset(ag, preset_id, all_agents=self.agents, broadcast=True)
+                    self.load_active_agent_data()
+                    self.notify(msg, title="Fleet Broadcast Complete", severity="information" if ok else "error")
+                elif ctype == "health":
+                    self.action_run_health_checks()
+                elif ctype == "registry":
+                    self.action_open_registry_modal()
+                elif ctype == "skill_install":
+                    self.action_open_skill_install_modal()
+                elif ctype == "restore":
+                    self.action_open_restore_modal()
+                elif ctype == "export":
+                    self.action_export_profile()
+                elif ctype == "import":
+                    self.action_import_profile()
+                elif ctype == "theme":
+                    self.action_open_theme_modal()
+                elif ctype == "ping":
+                    self.action_ping_active()
+                elif ctype == "refresh":
+                    self.action_refresh_data()
+
+            self.push_screen(DesktopCommandPaletteModal(), handle_palette)
+
+        def action_open_presets_tab(self):
+            self.query_one("#tabs-main", TabbedContent).active = "pane-presets"
+
+        def action_run_health_checks(self):
+            ag = self.agents.get(self.selected_key)
+            if not ag: return
+            act_m, dis_m = read_mcp_config(ag)
+            all_servers = {**act_m, **dis_m}
+            if not all_servers:
+                self.notify("No MCP servers configured for this agent", title="Health Check", severity="warning")
+                return
+
+            self.notify("Probing active MCP server heartbeats...", title="Health Check", severity="information")
+            checked_count = 0
+            for s_name, s_def in all_servers.items():
+                if s_name in act_m:
+                    ok, ms, detail = probe_mcp_server_health(s_name, s_def, timeout=2.0)
+                    self.mcp_health_cache[s_name] = (ok, ms, detail)
+                    checked_count += 1
+
+            self.load_active_agent_data()
+            self.notify(f"Probed {checked_count} active servers successfully!", title="Health Check Complete")
+
+        def action_open_registry_modal(self):
+            ag = self.agents.get(self.selected_key)
+            def on_reg_done(res):
+                if res:
+                    ok, msg = res
+                    self.load_active_agent_data()
+                    self.notify(msg, title="Registry Install", severity="information" if ok else "error")
+            self.push_screen(DesktopRegistryModal(ag, self.agents), on_reg_done)
+
+        def action_open_restore_modal(self):
+            ag = self.agents.get(self.selected_key)
+            def on_res_done(res):
+                if res:
+                    ok, msg = res
+                    self.load_active_agent_data()
+                    self.notify(msg, title="Rollback", severity="information" if ok else "error")
+            self.push_screen(DesktopRestoreModal(ag), on_res_done)
+
+        def action_open_skill_install_modal(self):
+            ag = self.agents.get(self.selected_key)
+            def on_skill_done(res):
+                if res:
+                    ok, msg = res
+                    self.load_active_agent_data()
+                    self.notify(msg, title="Skill Installer", severity="information" if ok else "error")
+            self.push_screen(DesktopSkillInstallModal(ag), on_skill_done)
+
+        def action_export_profile(self):
+            ok, msg = export_omni_profile(self.agents, "omni-profile.json")
+            self.notify(msg, title="Export Complete" if ok else "Export Failed", severity="information" if ok else "error")
+
+        def action_import_profile(self):
+            ok, msg = import_omni_profile(self.agents, "omni-profile.json")
+            self.load_active_agent_data()
+            self.load_global_matrix()
+            self.notify(msg, title="Import Complete" if ok else "Import Failed", severity="information" if ok else "error")
+
+        def action_apply_preset(self):
+            p_table = self.query_one("#table-presets", DataTable)
+            if p_table.cursor_row is not None and 0 <= p_table.cursor_row < len(MCP_PRESETS):
+                preset = MCP_PRESETS[p_table.cursor_row]
+                ag = self.agents.get(self.selected_key)
+                ok, msg = apply_mcp_preset(ag, preset["id"], all_agents=self.agents, broadcast=False)
+                self.load_active_agent_data()
+                self.notify(msg, title="Preset Applied", severity="information" if ok else "error")
+
+        def action_broadcast_preset(self):
+            p_table = self.query_one("#table-presets", DataTable)
+            if p_table.cursor_row is not None and 0 <= p_table.cursor_row < len(MCP_PRESETS):
+                preset = MCP_PRESETS[p_table.cursor_row]
+                ag = self.agents.get(self.selected_key)
+                ok, msg = apply_mcp_preset(ag, preset["id"], all_agents=self.agents, broadcast=True)
+                self.load_active_agent_data()
+                self.notify(msg, title="Fleet Broadcast Complete", severity="information" if ok else "error")
+
 # ================= APPLICATION ENTRYPOINT =================
 
 def main():
     """Main CLI / GUI entrypoint for OmniAgent Manager (pip console_script & direct execution)."""
     if "-h" in sys.argv or "--help" in sys.argv:
-        print("""OmniAgent Manager v3.5.0 - Universal AI Agent Control Hub
+        print("""OmniAgent Manager v4.0.0 - Universal AI Agent Control Hub
 Usage:
   omni-agent [OPTIONS]
   omni-agent-manager [OPTIONS]
@@ -3812,12 +4850,49 @@ Options:
   --version, -v         Show version information and exit
   --classic, --cli      Launch in classic minimal ANSI terminal menu mode
   --folders, --explorer Launch standalone interactive agent folder explorer
+  --export [PATH]       Export all agents configuration into omni-profile.json
+  --import [PATH]       Import and sync configuration from omni-profile.json
+  --presets             Display available MCP Workspaces & Presets catalog
+  --health              Run probe heartbeats on all discovered active MCP servers
   --theme THEME         Launch with specified UI theme (github_dark, matrix_green, etc.)
   --no-admin            Skip Administrator privilege check (for restricted environments)
 """)
         return
+    elif "--export" in sys.argv:
+        ag = discover_installed_agents()
+        out = "omni-profile.json"
+        if len(sys.argv) > sys.argv.index("--export") + 1:
+            out = sys.argv[sys.argv.index("--export") + 1]
+        ok, msg = export_omni_profile(ag, out)
+        print(f"[{'OK' if ok else 'FAIL'}] {msg}")
+        return
+    elif "--import" in sys.argv:
+        ag = discover_installed_agents()
+        inp = "omni-profile.json"
+        if len(sys.argv) > sys.argv.index("--import") + 1:
+            inp = sys.argv[sys.argv.index("--import") + 1]
+        ok, msg = import_omni_profile(ag, inp)
+        print(f"[{'OK' if ok else 'FAIL'}] {msg}")
+        return
+    elif "--presets" in sys.argv:
+        print("OmniAgent Manager - Available MCP Workspaces & Presets:")
+        for pr in MCP_PRESETS:
+            print(f"  • {pr['name']:<25} : {pr['desc']}")
+        return
+    elif "--health" in sys.argv:
+        ag = discover_installed_agents()
+        print("Running MCP Server Heartbeat Checks across detected fleet...")
+        for k, v in ag.items():
+            act_m, _ = read_mcp_config(v)
+            if act_m:
+                print(f"\nAgent: {v['name']} ({len(act_m)} active servers):")
+                for s_name, s_def in act_m.items():
+                    ok, ms, msg = probe_mcp_server_health(s_name, s_def)
+                    st = f"[LIVE {ms}ms]" if ok else f"[FAIL: {msg}]"
+                    print(f"  - {s_name:<20} : {st}")
+        return
     elif "-v" in sys.argv or "--version" in sys.argv:
-        print("OmniAgent Manager version 3.5.0")
+        print("OmniAgent Manager version 4.0.0")
         return
     elif "--classic" in sys.argv or "--cli" in sys.argv or not HAS_TEXTUAL:
         master_hub()
