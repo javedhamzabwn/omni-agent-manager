@@ -1,6 +1,6 @@
 # 🌐 OmniAgent Manager
 
-[![Version: 4.0.0](https://img.shields.io/badge/Version-4.0.0-blueviolet.svg)](pyproject.toml)
+[![Version: 4.1.0](https://img.shields.io/badge/Version-4.1.0-blueviolet.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://python.org)
 [![Package: pip installable](https://img.shields.io/badge/Package-pip%20install%20.-orange.svg)](pyproject.toml)
@@ -31,6 +31,10 @@ Instead of hunting through dozens of fragmented directories, cryptic JSON/TOML c
   - [10. Online Skill & Plugin Auto-Installer](#10-online-skill--plugin-auto-installer)
   - [11. Deep Agent Filesystem Explorer (20 Categories, 150+ Paths)](#11-deep-agent-filesystem-explorer-20-categories-150-paths)
   - [12. Automated Safety, AST Validation & Atomic Backups](#12-automated-safety-ast-validation--atomic-backups)
+  - [13. MCP Tool Runner & Schema Inspector (Zero LLM Tokens)](#13-mcp-tool-runner--schema-inspector-zero-llm-tokens)
+  - [14. Sub-Tool Context Trimmer](#14-sub-tool-context-trimmer)
+  - [15. Fleet Process & Local Engine Radar (psutil Live Monitor)](#15-fleet-process--local-engine-radar-psutil-live-monitor)
+  - [16. Universal Agent Config JSON Feature Switchboard](#16-universal-agent-config-json-feature-switchboard)
 - [Supported AI Agents & Runtimes](#-supported-ai-agents--runtimes)
 - [Installation & Setup](#-installation--setup)
   - [Method 1: Global Pip Installation (Recommended)](#method-1-global-pip-installation-recommended)
@@ -76,6 +80,10 @@ OmniAgent Manager eliminates these friction points by providing **one single sou
 | **Portable Fleet Profiles** | Share complete setups across machines or team members | Single-file export/import (`omni-profile.json`) with cross-platform normalization |
 | **Live Token & Cost Gauges** | Always know tool overhead and remaining context headroom | Real-time schema token estimator and per-request cost breakdown (`abtop` pattern) |
 | **Responsive Sidebar Rail** | Maximizes table width on smaller laptop displays | Auto-collapses into a 10-column icon rail when terminal width < 95 columns |
+| **MCP Tool Runner & Inspector** | Inspect tool schemas & test live tool calls without consuming LLM tokens | Interactive TUI runner sends JSON-RPC requests directly to MCP child processes |
+| **Sub-Tool Context Trimmer** | Disable heavy sub-tools within an MCP server to reduce prompt bloat | Selectively trim tools with `[Space]` and instantly reclaim context headroom |
+| **Fleet & Engine Radar** | Real-time observability over local models and agent processes | Live `psutil` process tracker + socket listener checks for Ollama, LM Studio, vLLM |
+| **Config Feature Switchboard** | Toggle hidden feature flags across all agent JSON configurations | Recursive boolean flag scanner with 1-click toggling and automated `.bak` backups |
 
 ---
 
@@ -191,6 +199,35 @@ Consolidates the complete filesystem catalog of modern AI coding infrastructure:
 - **Atomic File Swapping**: Configuration files are written to a temporary sibling file and renamed atomically to prevent partial writes.
 - **Syntax Pre-Validation**: Validates JSON and TOML structures before saving to prevent corrupting active agent configurations.
 
+### 13. MCP Tool Runner & Schema Inspector (Zero LLM Tokens)
+- **Direct Child Process Probing**: Connects directly to the configured MCP server process over standard JSON-RPC protocol (`initialize` → `notifications/initialized` → `tools/list`).
+- **Interactive Tool Runner**: Test and execute any tool live inside the TUI without wasting prompt tokens or calling LLM APIs.
+  - Pass JSON arguments directly (e.g. `{"query": "search query"}`).
+  - View raw structured output and verify parameters before deploying into autonomous agent workflows.
+- **Shortcut**: Press `I` on the MCP Tool Servers tab or click `🔍 Inspect & Trim Tools`.
+
+### 14. Sub-Tool Context Trimmer
+- **Surgical Context Reduction**: Large MCP servers often bundle 10–25 individual tools, injecting thousands of unwanted schema tokens into every LLM request.
+- **Per-Tool Disabling**: With one keypress (`Space`), disable individual tools within an MCP server (persisted in `.omni_trimmed_tools.json` and agent configuration).
+- **Instant Headroom Feedback**: The live context gauge immediately recalculates, displaying the exact tokens saved and cost reduction.
+
+### 15. Fleet Process & Local Engine Radar (psutil Live Monitor)
+- **Local AI Inference Engine Radar**: Probes listening ports in real time:
+  - `Ollama Inference Engine` (Port `11434`)
+  - `LM Studio Local Server` (Port `1234`)
+  - `vLLM / LocalAI Engine` (Port `8000`)
+  - `LocalAI Secondary` (Port `5000`)
+- **Active Agent Process Tracking**: Uses `psutil` to detect running instances of Claude, Antigravity, OpenCode, Cursor, Codex, and Hermes in system memory. Displays real-time PID, CPU %, and memory RSS footprint.
+- **Shortcut**: Press `O` or click `📡 Fleet Process Radar [O]`.
+- **CLI Mode**: Run `omni-agent --radar` for a fast terminal snapshot.
+
+### 16. Universal Agent Config JSON Feature Switchboard
+- **Dynamic Configuration Discovery**: Recursively scans all configuration files associated with the active agent (`.claude.json`, `antigravity/config.json`, `cursor/settings.json`, `opencode.json`, etc.).
+- **Live Boolean Flag Switchboard**: Extracts hundreds of hidden boolean settings and experimental feature flags into a clean, searchable table.
+- **1-Click Atomic Toggling**: Press `Space` to toggle any setting on/off. OmniAgent Manager automatically creates a timestamped `.bak` safety backup and rewrites the JSON file atomically.
+- **Shortcut**: Switch to tab `⚙️ Config Feature Flags` or press `G`.
+- **CLI Mode**: Run `omni-agent --features [AGENT_ID]` to inspect flags from the terminal.
+
 ---
 
 ## 🤖 Supported AI Agents & Runtimes
@@ -278,7 +315,7 @@ python omni_agent_manager.py
 ## ⌨️ CLI Reference & Command Flags
 
 ```
-OmniAgent Manager v4.0.0 - Universal AI Agent Control Hub
+OmniAgent Manager v4.1.0 - Universal AI Agent Control Hub
 
 Usage:
   omni-agent [OPTIONS]
@@ -289,6 +326,9 @@ Usage:
 Options:
   -h, --help            Display help reference and exit
   -v, --version         Display version details and exit
+  --radar               Display live local inference engine status & agent process monitor
+  --features [AGENT_ID] Scan and list all discovered toggleable JSON config feature flags
+  --tools [SERVER_NAME] Query tools/list schema for an MCP server on active agent
   --presets             Display available MCP Workspaces & Presets catalog
   --health              Run probe heartbeats on all discovered active MCP servers
   --export [PATH]       Export all agents configuration into omni-profile.json
@@ -310,6 +350,9 @@ Options:
 | `M` | Global | Switch to **AI Models & Providers** tab |
 | `S` | Global | Switch to **Skills Lifecycle** tab |
 | `C` | Global | Switch to **MCP Tool Servers** tab |
+| `I` | MCPs Tab | Open **MCP Tool Runner & Schema Inspector** modal |
+| `O` | Global | Open **Fleet Process & Local Engine Radar** modal |
+| `G` | Global | Switch to **Config Feature Flags Switchboard** tab |
 | `F` | Global | Switch to **20-Category Agent Explorer** tab |
 | `T` | Global | Open **Theme & Palette Selector** modal |
 | `P` | Models Tab | Run **Real-Time Ping Test** on active provider endpoint |

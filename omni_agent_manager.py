@@ -15,6 +15,7 @@ import json
 import shutil
 import re
 import subprocess
+import socket
 import urllib.request
 import urllib.error
 import difflib
@@ -3106,7 +3107,16 @@ def restore_backup_file(backup_path, target_path=None):
 def calculate_agent_tools_token_metrics(agent_cfg):
     act_m, _ = read_mcp_config(agent_cfg)
     raw_str = json.dumps(act_m)
-    est_tokens = max(10, int(len(raw_str) / 3.85)) if act_m else 0
+    base_tokens = max(10, int(len(raw_str) / 3.85)) if act_m else 0
+    
+    ag_id = agent_cfg.get("id")
+    trimmed_count = 0
+    if ag_id:
+        for s_name in act_m:
+            trimmed_count += len(get_trimmed_subtools(ag_id, s_name))
+    saved_tokens = trimmed_count * 200
+    est_tokens = max(0, base_tokens - saved_tokens)
+
     max_context = 128000
     headroom = max(0, max_context - est_tokens)
     pct = min(100.0, (est_tokens / max_context) * 100)
@@ -3121,13 +3131,16 @@ def calculate_agent_tools_token_metrics(agent_cfg):
 
     return {
         "tokens": est_tokens,
+        "base_tokens": base_tokens,
         "servers_count": len(act_m),
         "headroom": headroom,
         "pct_used": pct,
         "bar": bar,
         "cost_claude": cost_claude,
         "cost_deepseek": cost_deepseek,
-        "cost_gpt4o": cost_gpt4o
+        "cost_gpt4o": cost_gpt4o,
+        "trimmed_count": trimmed_count,
+        "saved_tokens": saved_tokens
     }
 
 def export_omni_profile(agents, out_path="omni-profile.json"):
@@ -3142,7 +3155,7 @@ def export_omni_profile(agents, out_path="omni-profile.json"):
             out_path = os.path.join(USERPROFILE, out_path)
 
     bundle = {
-        "version": "4.0.0",
+        "version": "4.1.0",
         "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "agents": {}
     }
@@ -3363,6 +3376,328 @@ def desktop_open_terminal(path):
         return True, "Terminal opened!"
     except Exception as e:
         return False, str(e)
+
+# ================= v4.1 ADVANCED FLEET & MCP ENGINE =================
+
+TRIMMED_TOOLS_FILE = os.path.join(USERPROFILE, ".omni_trimmed_tools.json")
+
+def get_trimmed_subtools(agent_id, server_name):
+    """Retrieve set of tool names disabled/trimmed for a specific MCP server and agent."""
+    if not os.path.exists(TRIMMED_TOOLS_FILE):
+        return set()
+    try:
+        with open(TRIMMED_TOOLS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        key = f"{agent_id}::{server_name}"
+        return set(data.get(key, []))
+    except Exception:
+        return set()
+
+def toggle_trimmed_subtool(agent_id, server_name, tool_name, agent_cfg=None):
+    """Toggle a sub-tool disabled state, saving to .omni_trimmed_tools.json and agent config."""
+    data = {}
+    if os.path.exists(TRIMMED_TOOLS_FILE):
+        try:
+            with open(TRIMMED_TOOLS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    key = f"{agent_id}::{server_name}"
+    curr = set(data.get(key, []))
+    if tool_name in curr:
+        curr.remove(tool_name)
+        new_st = "ENABLED"
+    else:
+        curr.add(tool_name)
+        new_st = "TRIMMED (DISABLED)"
+    data[key] = list(curr)
+    try:
+        with open(TRIMMED_TOOLS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        
+        # Also persist in agent MCP config file if writable
+        if agent_cfg and agent_cfg.get("mcp_file") and os.path.exists(agent_cfg["mcp_file"]):
+            try:
+                with open(agent_cfg["mcp_file"], "r", encoding="utf-8") as f:
+                    cfg_data = json.load(f)
+                servers_dict = cfg_data.get("mcpServers") or cfg_data.get("mcp")
+                if isinstance(servers_dict, dict) and server_name in servers_dict:
+                    s_obj = servers_dict[server_name]
+                    if isinstance(s_obj, dict):
+                        if curr:
+                            s_obj["disabled_tools"] = list(curr)
+                        else:
+                            s_obj.pop("disabled_tools", None)
+                        with open(agent_cfg["mcp_file"], "w", encoding="utf-8") as f:
+                            json.dump(cfg_data, f, indent=2)
+            except Exception:
+                pass
+
+        return True, f"Tool '{tool_name}' in '{server_name}' is now {new_st}"
+    except Exception as e:
+        return False, str(e)
+
+def query_mcp_tools(server_name, server_def, timeout=4.0):
+    """Query live MCP server tools schema via JSON-RPC protocol without LLM tokens."""
+    cmd = server_def.get("command")
+    args = list(server_def.get("args", []))
+    if isinstance(cmd, (list, tuple)):
+        if not cmd: return False, "Empty command list"
+        args = list(cmd[1:]) + args
+        cmd = cmd[0]
+    if not cmd or not isinstance(cmd, str):
+        return False, "No valid command configured"
+    bin_path = shutil.which(cmd)
+    if not bin_path:
+        return False, f"Binary '{cmd}' not found in PATH"
+
+    child_env = os.environ.copy()
+    if server_def.get("env") and isinstance(server_def["env"], dict):
+        child_env.update(server_def["env"])
+
+    try:
+        proc = subprocess.Popen(
+            [bin_path] + list(args),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=child_env,
+            text=True
+        )
+        init_req = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "omni-inspector", "version": "1.0"}
+            }
+        }) + "\n"
+        proc.stdin.write(init_req)
+        proc.stdin.flush()
+
+        init_notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
+        proc.stdin.write(init_notif)
+        proc.stdin.flush()
+
+        tools_req = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n"
+        proc.stdin.write(tools_req)
+        proc.stdin.flush()
+
+        start = time.time()
+        tools_result = None
+        while time.time() - start < timeout:
+            line = proc.stdout.readline()
+            if not line: break
+            try:
+                msg = json.loads(line)
+                if msg.get("id") == 2:
+                    tools_result = msg.get("result", {}).get("tools", [])
+                    break
+            except Exception:
+                pass
+        proc.kill()
+        if tools_result is not None:
+            return True, tools_result
+        return False, "No tools returned (timeout or unsupported)"
+    except Exception as e:
+        return False, str(e)
+
+def execute_mcp_tool(server_name, server_def, tool_name, arguments=None, timeout=6.0):
+    """Directly test and execute an MCP tool live via JSON-RPC protocol without LLM token cost."""
+    if arguments is None:
+        arguments = {}
+    cmd = server_def.get("command")
+    args = list(server_def.get("args", []))
+    if isinstance(cmd, (list, tuple)):
+        if not cmd: return False, "Empty command list"
+        args = list(cmd[1:]) + args
+        cmd = cmd[0]
+    if not cmd or not isinstance(cmd, str):
+        return False, "No valid command configured"
+    bin_path = shutil.which(cmd)
+    if not bin_path:
+        return False, f"Binary '{cmd}' not found in PATH"
+
+    child_env = os.environ.copy()
+    if server_def.get("env") and isinstance(server_def["env"], dict):
+        child_env.update(server_def["env"])
+
+    try:
+        proc = subprocess.Popen(
+            [bin_path] + list(args),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=child_env,
+            text=True
+        )
+        init_req = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "omni-tool-runner", "version": "1.0"}
+            }
+        }) + "\n"
+        proc.stdin.write(init_req)
+        proc.stdin.flush()
+
+        init_notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
+        proc.stdin.write(init_notif)
+        proc.stdin.flush()
+
+        call_req = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments}
+        }) + "\n"
+        proc.stdin.write(call_req)
+        proc.stdin.flush()
+
+        start = time.time()
+        call_result = None
+        while time.time() - start < timeout:
+            line = proc.stdout.readline()
+            if not line: break
+            try:
+                msg = json.loads(line)
+                if msg.get("id") == 3:
+                    if "error" in msg:
+                        call_result = (False, json.dumps(msg["error"], indent=2))
+                    else:
+                        call_result = (True, json.dumps(msg.get("result", {}), indent=2))
+                    break
+            except Exception:
+                pass
+        proc.kill()
+        if call_result is not None:
+            return call_result
+        return False, "Tool call timed out or returned no response"
+    except Exception as e:
+        return False, str(e)
+
+def scan_fleet_processes():
+    """Scan local AI inference engine ports and active agent processes via psutil."""
+    def check_port(port, host="127.0.0.1"):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.25)
+                return s.connect_ex((host, port)) == 0
+        except Exception:
+            return False
+
+    engines = [
+        {"name": "Ollama Inference Engine", "port": 11434, "online": check_port(11434)},
+        {"name": "LM Studio Local Server", "port": 1234, "online": check_port(1234)},
+        {"name": "vLLM / LocalAI Server", "port": 8000, "online": check_port(8000)},
+        {"name": "LocalAI Secondary", "port": 5000, "online": check_port(5000)},
+    ]
+
+    agent_keywords = ["claude", "antigravity", "agy", "opencode", "cursor", "codex", "hermes", "code", "gemini", "copilot"]
+    procs = []
+    if HAS_PSUTIL:
+        for p in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_info']):
+            try:
+                pname = p.info['name'].lower()
+                for kw in agent_keywords:
+                    if kw in pname:
+                        mem_mb = int(p.info['memory_info'].rss / (1024 * 1024))
+                        procs.append({
+                            "pid": p.info['pid'],
+                            "name": p.info['name'],
+                            "agent_kw": kw,
+                            "cpu": p.info.get('cpu_percent', 0.0),
+                            "mem_mb": mem_mb
+                        })
+                        break
+            except Exception:
+                pass
+    return {"engines": engines, "processes": procs}
+
+def extract_agent_config_flags(agent_cfg):
+    """Recursively scan agent JSON configs to discover all toggleable boolean feature flags."""
+    flags = []
+    files_to_check = []
+    mcp_file = agent_cfg.get("mcp_file")
+    if mcp_file and os.path.exists(mcp_file):
+        files_to_check.append(mcp_file)
+
+    ag_id = agent_cfg.get("id", "")
+    candidates = [
+        os.path.join(USERPROFILE, f".{ag_id}.json"),
+        os.path.join(USERPROFILE, f".{ag_id}", "config.json"),
+        os.path.join(USERPROFILE, ".config", ag_id, f"{ag_id}.json"),
+        os.path.join(USERPROFILE, ".gemini", "antigravity", "config.json"),
+        os.path.join(USERPROFILE, ".gemini", "config.json"),
+        os.path.join(USERPROFILE, ".cursor", "settings.json"),
+        os.path.join(USERPROFILE, "AppData", "Roaming", "Cursor", "User", "settings.json"),
+        os.path.join(USERPROFILE, "AppData", "Roaming", "Code", "User", "settings.json"),
+    ]
+    for c in candidates:
+        if c and os.path.exists(c) and c not in files_to_check:
+            files_to_check.append(c)
+
+    def walk_dict(data, prefix=""):
+        items = []
+        if isinstance(data, dict):
+            for k, v in data.items():
+                full_k = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, bool):
+                    section = prefix.split(".")[0] if prefix else "root"
+                    items.append((full_k, v, section))
+                elif isinstance(v, dict) and k not in ("mcpServers", "mcp", "providers", "models", "history", "conversations"):
+                    items.extend(walk_dict(v, full_k))
+        return items
+
+    for fpath in files_to_check:
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            extracted = walk_dict(d)
+            for k, v, sec in extracted:
+                flags.append({
+                    "file": fpath,
+                    "filename": os.path.basename(fpath),
+                    "key": k,
+                    "value": v,
+                    "section": sec
+                })
+        except Exception:
+            pass
+    return flags
+
+def set_agent_config_flag(file_path, dot_path, new_value):
+    """Atomically toggle a boolean feature flag in a JSON file with automatic timestamped .bak backup."""
+    if not os.path.exists(file_path):
+        return False, f"File not found: {file_path}"
+    try:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        bak_file = f"{file_path}.{ts}.bak"
+        shutil.copy2(file_path, bak_file)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        keys = dot_path.split(".")
+        curr = data
+        for k in keys[:-1]:
+            if k not in curr or not isinstance(curr[k], dict):
+                curr[k] = {}
+            curr = curr[k]
+        curr[keys[-1]] = bool(new_value)
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        st_str = "ENABLED" if new_value else "DISABLED"
+        return True, f"Saved {keys[-1]} = {st_str} (Backup: {os.path.basename(bak_file)})"
+    except Exception as e:
+        return False, str(e)
+
 
 if HAS_TEXTUAL:
     THEME_GITHUB_DARK = Theme(
@@ -3956,6 +4291,235 @@ if HAS_TEXTUAL:
             ok, msg = install_online_skill(stype, val, self.target_agent)
             self.dismiss((ok, msg))
 
+    class DesktopToolInspectorModal(ModalScreen):
+        CSS = """
+        DesktopToolInspectorModal {
+            align: center middle;
+        }
+        #inspector-box {
+            width: 100;
+            height: 38;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #inspector-header {
+            text-style: bold;
+            color: $accent;
+            margin-bottom: 0;
+        }
+        #inspector-subhead {
+            margin-bottom: 1;
+        }
+        #table-tools {
+            height: 14;
+            margin-bottom: 1;
+        }
+        #tool-runner-box {
+            height: 13;
+            border: solid $panel;
+            padding: 0 1;
+            margin-bottom: 1;
+        }
+        #lbl-tool-output {
+            height: 5;
+            background: $background;
+            padding: 0 1;
+            overflow-y: auto;
+        }
+        .btn-bar {
+            height: 3;
+            margin-top: 1;
+        }
+        """
+        def __init__(self, agent_cfg, server_name, server_def):
+            super().__init__()
+            self.agent_cfg = agent_cfg
+            self.server_name = server_name
+            self.server_def = server_def
+            self.tools = []
+            self.trimmed_set = get_trimmed_subtools(self.agent_cfg.get("id", "agent"), self.server_name)
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="inspector-box"):
+                yield Label(f"[b cyan]🔍 MCP TOOL RUNNER & SCHEMA INSPECTOR[/b cyan] — [bold green]{self.server_name}[/bold green]", id="inspector-header")
+                cmd_txt = f"{self.server_def.get('command')} {' '.join(self.server_def.get('args', []))[:60]}"
+                yield Label(f"[dim]Command:[/dim] {cmd_txt}", id="inspector-subhead")
+                yield DataTable(id="table-tools")
+                with Vertical(id="tool-runner-box"):
+                    yield Label("[b yellow]⚡ Direct Tool Call Tester (Zero LLM Tokens)[/b yellow]")
+                    with Horizontal():
+                        yield Input(placeholder='JSON arguments, e.g. {"query": "test"} or empty {}', id="input-tool-args")
+                        yield Button("▶ Run Tool Call", id="btn-run-tool", variant="success")
+                    yield Static("[dim]Output will appear here after execution...[/dim]", id="lbl-tool-output")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("⇄ Toggle Trim Tool [Space]", id="btn-toggle-trim", variant="warning")
+                    yield Button("🔄 Re-query Tools", id="btn-requery-tools", variant="default")
+                    yield Button("Close [Esc]", id="btn-close-inspector", variant="error")
+
+        def on_mount(self):
+            t_table = self.query_one("#table-tools", DataTable)
+            t_table.add_columns("Status", "Tool Name", "Parameters", "Description")
+            t_table.cursor_type = "row"
+            self.load_tools()
+
+        def load_tools(self):
+            t_table = self.query_one("#table-tools", DataTable)
+            t_table.clear()
+            self.trimmed_set = get_trimmed_subtools(self.agent_cfg.get("id", "agent"), self.server_name)
+            ok, res = query_mcp_tools(self.server_name, self.server_def, timeout=4.0)
+            if ok and isinstance(res, list):
+                self.tools = res
+                for idx, t in enumerate(self.tools):
+                    t_name = t.get("name", "unknown")
+                    is_trimmed = (t_name in self.trimmed_set)
+                    st = "[dim red]○ TRIMMED[/dim red]" if is_trimmed else "[bold green]● ENABLED[/bold green]"
+                    params = t.get("inputSchema", {}).get("properties", {})
+                    param_desc = f"{len(params)} fields ({', '.join(list(params.keys())[:3])})" if params else "None"
+                    desc = (t.get("description") or "No description").replace("\n", " ")[:45]
+                    t_table.add_row(st, t_name, param_desc, desc, key=f"t-{idx}")
+            else:
+                self.tools = []
+                err = str(res)
+                t_table.add_row("[dim]Error[/dim]", "Query Failed", "0", err[:50])
+
+        def action_toggle_trim_selected(self):
+            t_table = self.query_one("#table-tools", DataTable)
+            if t_table.cursor_row is not None and 0 <= t_table.cursor_row < len(self.tools):
+                t_item = self.tools[t_table.cursor_row]
+                t_name = t_item.get("name")
+                if t_name:
+                    ok, msg = toggle_trimmed_subtool(self.agent_cfg.get("id", "agent"), self.server_name, t_name, agent_cfg=self.agent_cfg)
+                    self.load_tools()
+                    self.notify(msg, title="Sub-Tool Context Trimmer", severity="information" if ok else "error")
+
+        def action_run_selected_tool(self):
+            t_table = self.query_one("#table-tools", DataTable)
+            if t_table.cursor_row is not None and 0 <= t_table.cursor_row < len(self.tools):
+                t_item = self.tools[t_table.cursor_row]
+                t_name = t_item.get("name")
+                raw_args = self.query_one("#input-tool-args", Input).value.strip()
+                args_dict = {}
+                if raw_args:
+                    try:
+                        args_dict = json.loads(raw_args)
+                    except Exception as je:
+                        self.notify(f"Invalid JSON arguments: {je}", title="JSON Error", severity="error")
+                        return
+                self.query_one("#lbl-tool-output", Static).update(f"[yellow]Executing {t_name} with params: {args_dict}...[/yellow]")
+                ok, res = execute_mcp_tool(self.server_name, self.server_def, t_name, arguments=args_dict, timeout=6.0)
+                if ok:
+                    out_text = f"[bold green]✔ SUCCESS (Zero LLM Tokens):[/bold green]\n{res[:800]}"
+                else:
+                    out_text = f"[bold red]✖ ERROR:[/bold red]\n{res[:800]}"
+                self.query_one("#lbl-tool-output", Static).update(out_text)
+
+        def on_key(self, event):
+            if event.key == "space":
+                event.prevent_default()
+                self.action_toggle_trim_selected()
+            elif event.key == "escape":
+                event.prevent_default()
+                self.dismiss(None)
+
+        def on_data_table_row_selected(self, event: DataTable.RowSelected):
+            self.action_toggle_trim_selected()
+
+        def on_button_pressed(self, event: Button.Pressed):
+            if event.button.id == "btn-toggle-trim":
+                self.action_toggle_trim_selected()
+            elif event.button.id == "btn-run-tool":
+                self.action_run_selected_tool()
+            elif event.button.id == "btn-requery-tools":
+                self.load_tools()
+            elif event.button.id == "btn-close-inspector":
+                self.dismiss(None)
+
+    class DesktopProcessRadarModal(ModalScreen):
+        CSS = """
+        DesktopProcessRadarModal {
+            align: center middle;
+        }
+        #radar-box {
+            width: 96;
+            height: 36;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #radar-header {
+            text-style: bold;
+            color: $accent;
+            margin-bottom: 1;
+        }
+        #table-engines {
+            height: 8;
+            margin-bottom: 1;
+        }
+        #table-procs {
+            height: 14;
+            margin-bottom: 1;
+        }
+        .btn-bar {
+            height: 3;
+            margin-top: 1;
+        }
+        """
+        def compose(self) -> ComposeResult:
+            with Vertical(id="radar-box"):
+                yield Label("[b cyan]📡 FLEET PROCESS & LOCAL ENGINE RADAR[/b cyan]", id="radar-header")
+                yield Label("[b yellow]Local AI Inference Engines (Listening Ports):[/b yellow]")
+                yield DataTable(id="table-engines")
+                yield Label("[b green]Active Coding Agent Processes (psutil Live Monitor):[/b green]")
+                yield DataTable(id="table-procs")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("🔄 Rescan Fleet Now", id="btn-rescan-radar", variant="primary")
+                    yield Button("Close [Esc]", id="btn-close-radar", variant="error")
+
+        def on_mount(self):
+            e_table = self.query_one("#table-engines", DataTable)
+            e_table.add_columns("Engine Name", "Port", "Status", "Readiness")
+            e_table.cursor_type = "row"
+
+            p_table = self.query_one("#table-procs", DataTable)
+            p_table.add_columns("PID", "Agent Affinity", "Process Name", "CPU %", "RAM (RSS)")
+            p_table.cursor_type = "row"
+
+            self.load_radar()
+
+        def load_radar(self):
+            res = scan_fleet_processes()
+            e_table = self.query_one("#table-engines", DataTable)
+            e_table.clear()
+            for idx, eng in enumerate(res["engines"]):
+                st = "[bold green]● ONLINE[/bold green]" if eng["online"] else "[dim red]○ OFFLINE[/dim red]"
+                lat = "[green]Ready for local inference[/green]" if eng["online"] else "[dim]No listener detected[/dim]"
+                e_table.add_row(eng["name"], str(eng["port"]), st, lat, key=f"e-{idx}")
+
+            p_table = self.query_one("#table-procs", DataTable)
+            p_table.clear()
+            procs = res["processes"]
+            if procs:
+                for idx, p in enumerate(procs):
+                    aff = f"[bold cyan]{p['agent_kw'].upper()}[/bold cyan]"
+                    cpu_s = f"{p['cpu']:.1f}%"
+                    ram_s = f"{p['mem_mb']:,} MB"
+                    p_table.add_row(str(p["pid"]), aff, p["name"], cpu_s, ram_s, key=f"p-{idx}")
+            else:
+                p_table.add_row("—", "None", "No active agent processes detected in memory", "0.0%", "0 MB")
+
+        def on_button_pressed(self, event: Button.Pressed):
+            if event.button.id == "btn-rescan-radar":
+                self.load_radar()
+                self.notify("Fleet radar rescanned successfully!", title="Radar Updated")
+            elif event.button.id == "btn-close-radar":
+                self.dismiss(None)
+
+        def on_key(self, event):
+            if event.key == "escape":
+                event.prevent_default()
+                self.dismiss(None)
+
     class AgentCustomizerDesktopApp(App):
         TITLE = "OmniAgent Manager"
         SUB_TITLE = "Universal AI Coding Agent Control Hub v4.0"
@@ -4074,6 +4638,9 @@ if HAS_TEXTUAL:
             Binding("m", "open_models_tab", "Models", show=True),
             Binding("s", "open_skills_tab", "Skills", show=True),
             Binding("c", "open_mcps_tab", "MCPs", show=True),
+            Binding("i", "open_tool_inspector", "Inspect Tools [I]", show=True),
+            Binding("o", "open_fleet_radar", "Radar [O]", show=True),
+            Binding("g", "open_features_tab", "Config Flags [G]", show=True),
             Binding("f", "open_explorer_tab", "Folders", show=True),
             Binding("t", "open_theme_modal", "Themes [T]", show=True),
             Binding("p", "ping_active", "Ping Test", show=True),
@@ -4090,6 +4657,7 @@ if HAS_TEXTUAL:
             self.cached_skills = []
             self.active_explorer_cat = "1"
             self.mcp_health_cache = {}
+            self.cached_features = []
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
@@ -4103,6 +4671,8 @@ if HAS_TEXTUAL:
                             yield Button(f"● {ag['name'][:18]}", id=f"ag-{k}", classes=cls)
                     with Vertical(id="sidebar-footer"):
                         yield Button("⚡ Command Palette [Ctrl+P]", id="btn-side-palette", variant="success")
+                        yield Button("📡 Fleet Process Radar [O]", id="btn-side-radar", variant="primary")
+                        yield Button("⚙️ Config Feature Flags [G]", id="btn-side-features", variant="default")
                         yield Button("🎨 Switch Theme [T]", id="btn-side-theme", variant="default")
                         yield Button("📂 Explore Agent Folders", id="btn-side-folders", variant="primary")
                         yield Button("🌐 1-Click Deploy Provider", id="btn-side-deploy", variant="warning")
@@ -4138,11 +4708,23 @@ if HAS_TEXTUAL:
                         with TabPane("🔌 MCP Tool Servers", id="pane-mcps"):
                             with Horizontal(classes="action-bar"):
                                 yield Button("⇄ Toggle Selected [Space]", id="btn-toggle-mcp", variant="primary")
-                                yield Button("⚡ Run Health Checks", id="btn-health-check", variant="warning")
+                                yield Button("🔍 Inspect & Trim Tools [I]", id="btn-inspect-tools", variant="warning")
+                                yield Button("⚡ Run Health Checks", id="btn-health-check", variant="default")
                                 yield Button("📦 1-Click Registry", id="btn-open-registry", variant="success")
                                 yield Button("↺ Restore .bak", id="btn-restore-bak", variant="error")
                                 yield Button("+ Add MCP Server", id="btn-add-mcp", variant="default")
                             yield DataTable(id="table-mcps")
+
+                        with TabPane("⚙️ Config Feature Flags", id="pane-features"):
+                            with Vertical(classes="desktop-card"):
+                                yield Label("[b cyan]⚙️ Universal Agent Config JSON Feature Switchboard[/b cyan]")
+                                yield Label("[dim]Discover, search, and toggle all boolean settings across config files. Changes automatically generate timestamped .bak backups.[/dim]")
+                            yield Input(placeholder="🔍 Type to filter settings and feature flags in real time...", id="features-filter")
+                            with Horizontal(classes="action-bar"):
+                                yield Button("⇄ Toggle Selected [Space]", id="btn-toggle-feature", variant="primary")
+                                yield Button("↺ Restore .bak", id="btn-restore-feature-bak", variant="error")
+                                yield Button("🔄 Reload Flags", id="btn-reload-features", variant="default")
+                            yield DataTable(id="table-features")
 
                         with TabPane("🍱 MCP Presets & Workspaces", id="pane-presets"):
                             with Vertical(classes="desktop-card"):
@@ -4211,9 +4793,10 @@ if HAS_TEXTUAL:
             # 0. Live Token & Cost Context Overhead Gauge
             try:
                 tm = calculate_agent_tools_token_metrics(ag)
+                trim_txt = f"  [b magenta]Trimmed:[/b magenta] {tm.get('trimmed_count', 0)} tools (-{tm.get('saved_tokens', 0):,} tok)" if tm.get('trimmed_count', 0) > 0 else ""
                 self.query_one("#lbl-token-gauge", Label).update(
                     f"[b green]Tools Context Overhead:[/b green] {tm['tokens']:,} tokens ({tm['pct_used']:.1f}% of 128k)  "
-                    f"[{tm['bar']}]  [b cyan]Headroom:[/b cyan] {tm['headroom']:,} tokens free  "
+                    f"[{tm['bar']}]  [b cyan]Headroom:[/b cyan] {tm['headroom']:,} tokens free{trim_txt}  "
                     f"[b yellow]Est. Cost:[/b yellow] ~${tm['cost_claude']:.4f}/req (Claude 3.5) | ~${tm['cost_deepseek']:.5f}/req (DeepSeek)"
                 )
             except Exception:
@@ -4305,6 +4888,91 @@ if HAS_TEXTUAL:
 
             if saved_mcp_row is not None and mcp_table.row_count > 0:
                 mcp_table.move_cursor(row=min(saved_mcp_row, mcp_table.row_count - 1), scroll=False)
+            
+            # 4. Populate Config Feature Flags
+            self.populate_features_table()
+
+        def populate_features_table(self):
+            ag = self.agents.get(self.selected_key)
+            if not ag: return
+
+            saved_f_row = None
+            try:
+                f_table = self.query_one("#table-features", DataTable)
+                saved_f_row = f_table.cursor_row
+            except Exception:
+                return
+
+            f_table.clear(columns=True)
+            f_table.add_columns("Status", "Setting Path (Key)", "Config File", "Section", "Quick Action")
+            f_table.cursor_type = "row"
+
+            flags = extract_agent_config_flags(ag)
+            self.cached_features = flags
+
+            q = ""
+            try:
+                q = self.query_one("#features-filter", Input).value.strip().lower()
+            except Exception:
+                pass
+
+            filtered = [f for f in flags if (q in f["key"].lower() or q in f["section"].lower() or q in f["filename"].lower())] if q else flags
+
+            for idx, fl in enumerate(filtered):
+                if fl["value"]:
+                    st = "[bold #a6e3a1]  ● ENABLED [ON]   [/bold #a6e3a1]"
+                    act = "[bold #89b4fa] [ ⇄ Click / Space ] [/bold #89b4fa]"
+                else:
+                    st = "[dim #6c7086]  ○ DISABLED [OFF] [/dim #6c7086]"
+                    act = "[bold #a6e3a1] [ ⇄ Click / Space ] [/bold #a6e3a1]"
+                f_table.add_row(st, fl["key"], fl["filename"], fl["section"], act, key=f"feat-{idx}")
+
+            if saved_f_row is not None and f_table.row_count > 0:
+                f_table.move_cursor(row=min(saved_f_row, f_table.row_count - 1), scroll=False)
+
+        def action_toggle_config_feature(self):
+            f_table = self.query_one("#table-features", DataTable)
+            if f_table.cursor_row is not None and f_table.row_count > 0:
+                saved_row = f_table.cursor_row
+                q = ""
+                try:
+                    q = self.query_one("#features-filter", Input).value.strip().lower()
+                except Exception:
+                    pass
+                filtered = [f for f in self.cached_features if (q in f["key"].lower() or q in f["section"].lower() or q in f["filename"].lower())] if q else self.cached_features
+                if 0 <= saved_row < len(filtered):
+                    item = filtered[saved_row]
+                    new_val = not item["value"]
+                    ok, msg = set_agent_config_flag(item["file"], item["key"], new_val)
+                    self.populate_features_table()
+                    if f_table.row_count > 0:
+                        f_table.move_cursor(row=min(saved_row, f_table.row_count - 1), scroll=False)
+                    self.notify(msg, title="Feature Flag Updated" if ok else "Update Failed", severity="information" if ok else "error")
+
+        def action_open_tool_inspector(self):
+            ag = self.agents.get(self.selected_key)
+            if not ag: return
+            act_m, dis_m = read_mcp_config(ag)
+            sorted_mcps = sorted(list(set(act_m.keys()).union(set(dis_m.keys()))))
+            if not sorted_mcps:
+                self.notify("No MCP servers configured for active agent", title="Tool Inspector", severity="warning")
+                return
+            mcp_table = self.query_one("#table-mcps", DataTable)
+            cur_idx = mcp_table.cursor_row if (mcp_table.cursor_row is not None and 0 <= mcp_table.cursor_row < len(sorted_mcps)) else 0
+            s_name = sorted_mcps[cur_idx]
+            s_def = act_m.get(s_name) or dis_m.get(s_name)
+            if not s_def:
+                self.notify(f"Could not find configuration for {s_name}", title="Error", severity="error")
+                return
+            def on_inspector_done(res):
+                self.load_active_agent_data()
+            self.push_screen(DesktopToolInspectorModal(ag, s_name, s_def), on_inspector_done)
+
+        def action_open_fleet_radar(self):
+            self.push_screen(DesktopProcessRadarModal())
+
+        def action_open_features_tab(self):
+            self.query_one("#tabs-main", TabbedContent).active = "pane-features"
 
         def populate_skills_table(self):
             ag = self.agents.get(self.selected_key)
@@ -4414,6 +5082,9 @@ if HAS_TEXTUAL:
                     elif focused.id == "table-skills":
                         event.prevent_default()
                         self.action_toggle_skill()
+                    elif focused.id == "table-features":
+                        event.prevent_default()
+                        self.action_toggle_config_feature()
 
         def on_button_pressed(self, event: Button.Pressed):
             bid = event.button.id
@@ -4475,6 +5146,52 @@ if HAS_TEXTUAL:
             elif bid == "btn-toggle-mcp":
                 self.action_toggle_mcp()
 
+            elif bid == "btn-inspect-tools":
+                self.action_open_tool_inspector()
+
+            elif bid == "btn-side-radar":
+                self.action_open_fleet_radar()
+
+            elif bid == "btn-side-features":
+                self.action_open_features_tab()
+
+            elif bid == "btn-toggle-feature":
+                self.action_toggle_config_feature()
+
+            elif bid == "btn-reload-features":
+                self.populate_features_table()
+                self.notify("Reloaded config feature flags", title="Config Flags")
+
+            elif bid == "btn-restore-feature-bak":
+                self.action_open_restore_modal()
+
+            elif bid == "btn-side-palette":
+                self.action_open_command_palette()
+
+            elif bid == "btn-side-export":
+                self.action_export_profile()
+
+            elif bid == "btn-side-import":
+                self.action_import_profile()
+
+            elif bid == "btn-health-check":
+                self.action_run_health_checks()
+
+            elif bid == "btn-open-registry":
+                self.action_open_registry_modal()
+
+            elif bid == "btn-restore-bak":
+                self.action_open_restore_modal()
+
+            elif bid == "btn-online-skill":
+                self.action_open_skill_install_modal()
+
+            elif bid == "btn-apply-preset":
+                self.action_apply_preset()
+
+            elif bid == "btn-broadcast-preset":
+                self.action_broadcast_preset()
+
             elif bid == "btn-skill-toggle":
                 self.action_toggle_skill()
 
@@ -4506,6 +5223,8 @@ if HAS_TEXTUAL:
         def on_input_changed(self, event: Input.Changed):
             if event.input.id == "skills-filter":
                 self.populate_skills_table()
+            elif event.input.id == "features-filter":
+                self.populate_features_table()
 
         def on_data_table_row_selected(self, event: DataTable.RowSelected):
             tid = event.data_table.id
@@ -4526,6 +5245,8 @@ if HAS_TEXTUAL:
                 self.action_toggle_mcp()
             elif tid == "table-skills":
                 self.action_toggle_skill()
+            elif tid == "table-features":
+                self.action_toggle_config_feature()
             elif tid == "table-explorer":
                 self.perform_explorer_action("explorer")
 
@@ -4735,6 +5456,12 @@ if HAS_TEXTUAL:
                     ok, msg = apply_mcp_preset(ag, preset_id, all_agents=self.agents, broadcast=True)
                     self.load_active_agent_data()
                     self.notify(msg, title="Fleet Broadcast Complete", severity="information" if ok else "error")
+                elif ctype == "radar":
+                    self.action_open_fleet_radar()
+                elif ctype == "inspector":
+                    self.action_open_tool_inspector()
+                elif ctype == "features":
+                    self.action_open_features_tab()
                 elif ctype == "health":
                     self.action_run_health_checks()
                 elif ctype == "registry":
@@ -4839,7 +5566,7 @@ if HAS_TEXTUAL:
 def main():
     """Main CLI / GUI entrypoint for OmniAgent Manager (pip console_script & direct execution)."""
     if "-h" in sys.argv or "--help" in sys.argv:
-        print("""OmniAgent Manager v4.0.0 - Universal AI Agent Control Hub
+        print("""OmniAgent Manager v4.1.0 - Universal AI Agent Control Hub
 Usage:
   omni-agent [OPTIONS]
   omni-agent-manager [OPTIONS]
@@ -4850,6 +5577,9 @@ Options:
   --version, -v         Show version information and exit
   --classic, --cli      Launch in classic minimal ANSI terminal menu mode
   --folders, --explorer Launch standalone interactive agent folder explorer
+  --radar               Display live local inference engine status & agent process monitor
+  --features [AGENT_ID] Scan and list all discovered toggleable JSON config feature flags
+  --tools [SERVER_NAME] Query tools/list schema for an MCP server on active agent
   --export [PATH]       Export all agents configuration into omni-profile.json
   --import [PATH]       Import and sync configuration from omni-profile.json
   --presets             Display available MCP Workspaces & Presets catalog
@@ -4879,6 +5609,63 @@ Options:
         for pr in MCP_PRESETS:
             print(f"  • {pr['name']:<25} : {pr['desc']}")
         return
+    elif "--radar" in sys.argv:
+        res = scan_fleet_processes()
+        print("OmniAgent Fleet & Local Engine Radar:")
+        print("\n[Local AI Inference Engines]")
+        for eng in res["engines"]:
+            st = "ONLINE" if eng["online"] else "OFFLINE"
+            print(f"  • {eng['name']:<28} (Port {eng['port']}): [{st}]")
+        print("\n[Active Agent Processes (psutil)]")
+        if res["processes"]:
+            for p in res["processes"]:
+                print(f"  • PID {p['pid']:<6} | {p['agent_kw'].upper():<12} | {p['name']:<20} | CPU: {p['cpu']:.1f}% | RAM: {p['mem_mb']} MB")
+        else:
+            print("  • No active agent processes currently in memory.")
+        return
+    elif "--features" in sys.argv:
+        ag = discover_installed_agents()
+        target_k = "claude"
+        if len(sys.argv) > sys.argv.index("--features") + 1 and not sys.argv[sys.argv.index("--features") + 1].startswith("-"):
+            target_k = sys.argv[sys.argv.index("--features") + 1]
+        target_ag = ag.get(target_k) or next(iter(ag.values()), None)
+        if not target_ag:
+            print(f"Agent '{target_k}' not found.")
+            return
+        flags = extract_agent_config_flags(target_ag)
+        print(f"Config Feature Flags for {target_ag['name']} ({len(flags)} discovered):")
+        for fl in flags:
+            st = "ENABLED [ON]" if fl["value"] else "DISABLED [OFF]"
+            print(f"  • {fl['key']:<45} : [{st}] ({fl['filename']})")
+        return
+    elif "--tools" in sys.argv:
+        ag = discover_installed_agents()
+        target_s = None
+        if len(sys.argv) > sys.argv.index("--tools") + 1 and not sys.argv[sys.argv.index("--tools") + 1].startswith("-"):
+            target_s = sys.argv[sys.argv.index("--tools") + 1]
+        found_def = None
+        for a_k, a_v in ag.items():
+            act_m, _ = read_mcp_config(a_v)
+            if target_s and target_s in act_m:
+                found_def = act_m[target_s]
+                break
+            elif not target_s and act_m:
+                target_s = next(iter(act_m.keys()))
+                found_def = act_m[target_s]
+                break
+        if not found_def:
+            print(f"MCP server '{target_s}' not found.")
+            return
+        print(f"Querying tools/list for MCP server '{target_s}'...")
+        ok, res = query_mcp_tools(target_s, found_def)
+        if ok:
+            print(f"Discovered {len(res)} tools:")
+            for t in res:
+                params = list(t.get("inputSchema", {}).get("properties", {}).keys())
+                print(f"  • {t.get('name'):<25} : {t.get('description', '')[:50]} (params: {params})")
+        else:
+            print(f"Failed to query tools: {res}")
+        return
     elif "--health" in sys.argv:
         ag = discover_installed_agents()
         print("Running MCP Server Heartbeat Checks across detected fleet...")
@@ -4892,7 +5679,7 @@ Options:
                     print(f"  - {s_name:<20} : {st}")
         return
     elif "-v" in sys.argv or "--version" in sys.argv:
-        print("OmniAgent Manager version 4.0.0")
+        print("OmniAgent Manager version 4.1.0")
         return
     elif "--classic" in sys.argv or "--cli" in sys.argv or not HAS_TEXTUAL:
         master_hub()
