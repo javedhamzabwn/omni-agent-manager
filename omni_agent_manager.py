@@ -79,6 +79,30 @@ USERPROFILE = os.environ.get("USERPROFILE") or os.environ.get("HOME") or os.path
 LOCALAPPDATA = os.environ.get("LOCALAPPDATA", os.path.join(USERPROFILE, "AppData", "Local"))
 APPDATA = os.environ.get("APPDATA", os.path.join(USERPROFILE, "AppData", "Roaming"))
 
+from omni_core.paths import (
+    normalize_path, find_executable, detect_terminals, detect_editors,
+    get_default_project_roots, OMNI_DB_PATH, OMNI_PROJECTS_JSON, OMNI_BACKUPS_DIR
+)
+from omni_core.db import (
+    init_db, get_projects, get_project, upsert_project, delete_project,
+    toggle_project_favorite, update_project_last_opened, get_scan_roots, add_scan_root
+)
+from omni_core.projects import (
+    inspect_project_metadata, scan_directory_for_projects, run_project_discovery_scan
+)
+from omni_core.adapters import (
+    get_adapter, get_all_adapters, CAP_SUPPORTED, BaseAgentAdapter
+)
+from omni_core.launcher import (
+    open_in_explorer, open_in_vscode, open_in_editor, open_in_terminal, launch_agent_in_project
+)
+from omni_core.editor import (
+    read_file_safe, write_file_safe, validate_content, generate_diff, detect_file_format
+)
+from omni_core.sessions import (
+    register_session, list_sessions, terminate_session, is_pid_alive
+)
+
 def resolve_projects_dir():
     curr = os.path.dirname(os.path.abspath(__file__))
     for p in [curr, os.path.abspath(os.path.join(curr, "..")), os.path.abspath(os.path.join(curr, "..", ".."))]:
@@ -5750,6 +5774,10 @@ if HAS_TEXTUAL:
         """
 
         COMMANDS = [
+            ("tab:projects", "📑 Go to Tab: 📂 Projects & Workspaces [P]", "tab"),
+            ("tab:sessions", "📑 Go to Tab: ⚡ Managed Process Sessions [X]", "tab"),
+            ("project:add", "📂 Register New Custom Project / Workspace", "project_add"),
+            ("project:scan", "🔍 Scan Local Disks for Projects", "project_scan"),
             ("tab:models", "📑 Go to Tab: 🤖 AI Models & Providers", "tab"),
             ("tab:skills", "📑 Go to Tab: ⚡ Skills Management Hub", "tab"),
             ("tab:mcps", "📑 Go to Tab: 🔌 MCP Tool Servers", "tab"),
@@ -6964,6 +6992,214 @@ if HAS_TEXTUAL:
                 event.prevent_default()
                 self.dismiss(None)
 
+
+    class DesktopAddProjectModal(ModalScreen):
+        CSS = """
+        DesktopAddProjectModal {
+            align: center middle;
+        }
+        #add-proj-box {
+            width: 86;
+            height: auto;
+            max-height: 85%;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        .field-label {
+            color: $accent;
+            text-style: bold;
+            margin-top: 1;
+        }
+        .btn-bar {
+            height: 3;
+            margin-top: 1;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+        def __init__(self, fleet_agents):
+            super().__init__()
+            self.fleet_agents = fleet_agents
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="add-proj-box"):
+                yield Label("[bold cyan]📂 REGISTER NEW CODING PROJECT / WORKSPACE[/bold cyan]")
+                yield Label("Project Root Directory Path:", classes="field-label")
+                yield Input(placeholder="e.g. D:\\Projects\\my-app or C:\\Users\\...\\Documents", id="in-proj-path")
+                yield Label("Project Display Name (leave blank to auto-detect):", classes="field-label")
+                yield Input(placeholder="e.g. my-app", id="in-proj-name")
+                yield Label("Default Coding Agent:", classes="field-label")
+                ag_options = [(ag.get("name", k), k) for k, ag in self.fleet_agents.items()]
+                yield Select(options=ag_options, value=ag_options[0][1] if ag_options else "claude", id="sel-proj-agent")
+                yield Label("Tags (comma separated, e.g. python, backend, api):", classes="field-label")
+                yield Input(placeholder="e.g. python, web, agent", id="in-proj-tags")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("💾 Save & Register", id="btn-save-project", variant="success")
+                    yield Button("Cancel [Esc]", id="btn-cancel-project", variant="default")
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-cancel-project":
+                self.dismiss(None)
+            elif bid == "btn-save-project":
+                p_path = self.query_one("#in-proj-path", Input).value.strip()
+                if not p_path:
+                    self.app.notify("Project path is required", title="Validation Error", severity="error")
+                    return
+                p_name = self.query_one("#in-proj-name", Input).value.strip() or os.path.basename(normalize_path(p_path))
+                p_ag = self.query_one("#sel-proj-agent", Select).value or "claude"
+                p_tags_raw = self.query_one("#in-proj-tags", Input).value.strip()
+                p_tags = [t.strip() for t in p_tags_raw.split(",") if t.strip()]
+                meta = inspect_project_metadata(p_path)
+                res = upsert_project({
+                    "name": p_name,
+                    "path": p_path,
+                    "default_agent": p_ag,
+                    "tags": p_tags,
+                    "git_root": meta.get("git_root", ""),
+                    "project_type": meta.get("project_type", "generic"),
+                    "associated_agents": meta.get("associated_agents", []),
+                    "scan_status": "ready"
+                })
+                self.dismiss(res)
+
+    class DesktopProjectScanModal(ModalScreen):
+        CSS = """
+        DesktopProjectScanModal {
+            align: center middle;
+        }
+        #scan-box {
+            width: 96;
+            height: 34;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #scan-table {
+            height: 20;
+            margin-top: 1;
+            margin-bottom: 1;
+            border: round $panel;
+        }
+        .btn-bar {
+            height: 3;
+            margin-top: 1;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+        def __init__(self):
+            super().__init__()
+            self.discovered = []
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="scan-box"):
+                yield Label("[bold cyan]🔍 PROJECT AUTO-DISCOVERY SCANNER[/bold cyan]")
+                yield Label("Discovered repositories and project directories across configured scan roots:", id="lbl-scan-status")
+                yield DataTable(id="scan-table")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("⚡ Scan Disks Now", id="btn-start-scan", variant="primary")
+                    yield Button("📥 Register Discovered [Space]", id="btn-register-all", variant="success")
+                    yield Button("Close [Esc]", id="btn-close-scan", variant="default")
+
+        def on_mount(self):
+            table = self.query_one("#scan-table", DataTable)
+            table.clear(columns=True)
+            table.add_columns("Project Name", "Type", "Git Root", "Discovered Path")
+            table.cursor_type = "row"
+
+        @work(thread=True)
+        def run_scan_worker(self):
+            self.app.call_from_thread(self.update_status, "Scanning roots for Git repos and coding workspaces...")
+            discovered = run_project_discovery_scan(max_depth=3, auto_register=True)
+            self.discovered = discovered
+            self.app.call_from_thread(self.populate_results, discovered)
+
+        def update_status(self, text):
+            self.query_one("#lbl-scan-status", Label).update(text)
+
+        def populate_results(self, discovered):
+            table = self.query_one("#scan-table", DataTable)
+            table.clear()
+            for p in discovered:
+                table.add_row(p["name"], p.get("project_type", "generic"), "Git" if p.get("git_root") else "Local", p["path"])
+            self.update_status(f"[b green]✔ Discovered {len(discovered)} project(s)! All registered in local registry.[/b green]")
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-close-scan":
+                self.dismiss(len(self.discovered))
+            elif bid == "btn-start-scan":
+                self.run_scan_worker()
+            elif bid == "btn-register-all":
+                self.dismiss(len(self.discovered))
+
+    class DesktopConfigEditorModal(ModalScreen):
+        CSS = """
+        DesktopConfigEditorModal {
+            align: center middle;
+        }
+        #editor-box {
+            width: 96;
+            height: 38;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #editor-path-label {
+            color: $accent;
+            text-style: bold;
+            margin-bottom: 1;
+        }
+        #editor-content-input {
+            height: 22;
+            border: round $panel;
+            background: $panel 20%;
+            margin-bottom: 1;
+        }
+        .btn-bar {
+            height: 3;
+        }
+        .btn-bar Button {
+            margin-right: 1;
+        }
+        """
+        def __init__(self, filepath):
+            super().__init__()
+            self.filepath = filepath
+            self.file_data = read_file_safe(filepath)
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="editor-box"):
+                yield Label(f"[bold cyan]📝 SAFE CONFIG & MARKDOWN EDITOR: {os.path.basename(self.filepath)}[/bold cyan]")
+                yield Label(f"Path: [dim]{self.filepath}[/dim]", id="editor-path-label")
+                initial_txt = self.file_data.get("content", "") if self.file_data.get("success") else "Error loading file."
+                yield Input(value=initial_txt.replace("\n", " "), id="editor-content-input")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("💾 Save Safe & Backup", id="btn-save-editor", variant="success")
+                    yield Button("📂 Open in External Editor", id="btn-open-ext-editor", variant="primary")
+                    yield Button("Close [Esc]", id="btn-close-editor", variant="default")
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-close-editor":
+                self.dismiss(False)
+            elif bid == "btn-open-ext-editor":
+                open_in_editor(self.filepath)
+                self.dismiss(True)
+            elif bid == "btn-save-editor":
+                content = self.query_one("#editor-content-input", Input).value
+                ok, msg, bak = write_file_safe(self.filepath, content, expected_mtime=self.file_data.get("mtime"))
+                if ok:
+                    self.app.notify(f"Saved with backup: {os.path.basename(bak or '')}", title="File Saved", severity="information")
+                    self.dismiss(True)
+                else:
+                    self.app.notify(msg, title="Save Failed", severity="error")
+
+
     class AgentCustomizerDesktopApp(App):
         TITLE = "OmniAgent Manager"
         SUB_TITLE = "Universal AI Coding Agent Control Hub v4.1.0"
@@ -7168,7 +7404,8 @@ if HAS_TEXTUAL:
             Binding("g", "open_features_tab", "Config Flags [G]", show=True),
             Binding("f", "open_explorer_tab", "Folders", show=True),
             Binding("t", "open_theme_modal", "Themes [T]", show=True),
-            Binding("p", "ping_active", "Ping Test", show=True),
+            Binding("p", "open_projects_tab", "Projects [P]", show=True),
+            Binding("x", "open_sessions_tab", "Sessions [X]", show=True),
             Binding("r", "refresh_data", "Refresh", show=True),
             Binding("ctrl+r", "open_restore_modal", "Restore .bak", show=False),
             Binding("q", "quit", "Quit", show=True),
@@ -7212,6 +7449,32 @@ if HAS_TEXTUAL:
                 with Vertical(id="workspace"):
                     yield Label("[dim]Calculating tool context overhead...[/dim]", id="lbl-token-gauge")
                     with TabbedContent(id="tabs-main"):
+                        with TabPane("📂 Projects [P]", id="pane-projects"):
+                            with Vertical(classes="desktop-card", id="card-project-details"):
+                                yield Label("[b cyan]📂 WORKSPACE & PROJECT REGISTRY[/b cyan]", id="lbl-proj-header")
+                                yield Label("[dim]Select a project to inspect details, instructions, MCPs, and launch agents.[/dim]", id="lbl-proj-details")
+                            yield Input(placeholder="🔍 Type to filter projects by name, tag, or path...", id="projects-filter")
+                            with HorizontalScroll(classes="action-bar"):
+                                yield Button("+ Add Project", id="btn-add-project", variant="success")
+                                yield Button("🔍 Scan Roots", id="btn-scan-projects", variant="primary")
+                                yield Button("⭐ Favorite [Space]", id="btn-fav-project", variant="default")
+                                yield Button("🚀 Launch Agent", id="btn-launch-project-agent", variant="warning")
+                                yield Button("📁 Explorer [O]", id="btn-proj-explorer", variant="default")
+                                yield Button("💻 Terminal [T]", id="btn-proj-terminal", variant="default")
+                                yield Button("📝 VS Code", id="btn-proj-vscode", variant="default")
+                                yield Button("⚙️ Config/Editor", id="btn-proj-config", variant="default")
+                                yield Button("🗑️ Remove", id="btn-remove-project", variant="error")
+                            yield DataTable(id="table-projects")
+
+                        with TabPane("⚡ Sessions [X]", id="pane-sessions"):
+                            with Vertical(classes="desktop-card"):
+                                yield Label("[b cyan]⚡ MANAGED PROCESS SESSIONS[/b cyan]")
+                                yield Label("[dim]Track and manage AI coding agent processes launched in project working directories.[/dim]")
+                            with HorizontalScroll(classes="action-bar"):
+                                yield Button("🔄 Refresh", id="btn-refresh-sessions", variant="primary")
+                                yield Button("🛑 Terminate PID", id="btn-kill-session", variant="error")
+                                yield Button("💻 Terminal", id="btn-term-session", variant="default")
+                            yield DataTable(id="table-sessions")
                         with TabPane("🤖 Models [M]", id="pane-models"):
                             with Vertical(classes="desktop-card", id="card-models"):
                                 yield Label("[b green]ACTIVE MODEL:[/b green] Loading...", id="lbl-active-model")
@@ -7289,6 +7552,78 @@ if HAS_TEXTUAL:
                             yield DataTable(id="table-global")
             yield Footer()
 
+        def action_open_projects_tab(self):
+            self.query_one("#tabs-main", TabbedContent).active = "pane-projects"
+
+        def action_open_sessions_tab(self):
+            self.query_one("#tabs-main", TabbedContent).active = "pane-sessions"
+
+        def populate_projects_table(self):
+            try:
+                table = self.query_one("#table-projects", DataTable)
+            except Exception:
+                return
+            table.clear(columns=True)
+            table.add_columns("★", "Project Name", "Default Agent", "Stack / Type", "Git Root", "Absolute Path")
+            table.cursor_type = "row"
+            
+            flt = self.query_one("#projects-filter", Input).value.strip() if self.query("#projects-filter") else ""
+            projects = get_projects(search=flt if flt else None, sort_by="last_opened")
+            self.cached_projects = projects
+            for p in projects:
+                fav = "★" if p.get("favorite") else "☆"
+                ag = p.get("default_agent") or "claude"
+                ptype = p.get("project_type") or "generic"
+                git_disp = "✔ Git" if p.get("git_root") else "-"
+                table.add_row(fav, p["name"], ag, ptype, git_disp, p["path"])
+                
+            if projects:
+                self.update_project_details_card(projects[0])
+            else:
+                try:
+                    lbl = self.query_one("#lbl-proj-details", Label)
+                    lbl.update("[dim]No projects registered yet. Click [+ Add Project] or [🔍 Scan Roots] to discover projects.[/dim]")
+                except Exception:
+                    pass
+
+        def update_project_details_card(self, proj):
+            try:
+                meta = inspect_project_metadata(proj["path"])
+                inst_names = [i["name"] for i in meta.get("instructions", [])]
+                ag_names = [a["agent"] for a in meta.get("agent_configs", [])]
+                mcp_count = len(meta.get("mcps", []))
+                
+                det_text = [
+                    f"[b cyan]{proj['name']}[/b cyan] | Path: [dim]{proj['path']}[/dim]",
+                    f"Stack: [b]{proj.get('project_type', 'generic')}[/b] | Default Agent: [b green]{proj.get('default_agent', 'claude')}[/b green] | Git: [yellow]{proj.get('git_root') or 'None'}[/yellow]",
+                    f"Instructions: {', '.join(inst_names) if inst_names else 'None'} | Agent Configs: {', '.join(ag_names) if ag_names else 'None'} | MCP Files: {mcp_count}"
+                ]
+                self.query_one("#lbl-proj-details", Label).update("\n".join(det_text))
+            except Exception:
+                pass
+
+        def populate_sessions_table(self):
+            try:
+                table = self.query_one("#table-sessions", DataTable)
+            except Exception:
+                return
+            table.clear(columns=True)
+            table.add_columns("Status", "Session ID", "Agent", "PID", "Project Path", "Started At")
+            table.cursor_type = "row"
+            sessions = list_sessions()
+            for s in sessions:
+                st = "🟢 RUNNING" if s.get("status") == "running" else "⚪ STOPPED"
+                table.add_row(st, s["id"], s.get("agent_id", "-"), str(s.get("pid", "-")), s.get("project_id", "-"), s.get("start_time", "")[:19])
+
+        def get_selected_project(self):
+            try:
+                table = self.query_one("#table-projects", DataTable)
+                if table.cursor_row is not None and hasattr(self, 'cached_projects') and 0 <= table.cursor_row < len(self.cached_projects):
+                    return self.cached_projects[table.cursor_row]
+            except Exception:
+                pass
+            return None
+
         def on_mount(self):
             # Register modern custom themes
             for th in CUSTOM_APP_THEMES:
@@ -7304,6 +7639,9 @@ if HAS_TEXTUAL:
             self.load_active_agent_data()
             self.load_global_matrix()
             self.init_explorer_categories()
+            init_db()
+            self.populate_projects_table()
+            self.populate_sessions_table()
 
         def on_resize(self, event: events.Resize) -> None:
             try:
@@ -7832,6 +8170,92 @@ if HAS_TEXTUAL:
             elif bid == "btn-skill-none":
                 self.action_stash_all_skills()
 
+            elif bid == "btn-add-project":
+                def on_add_done(p):
+                    if p:
+                        self.populate_projects_table()
+                        self.notify(f"Registered project '{p['name']}'!", title="Project Registered", severity="information")
+                self.push_screen(DesktopAddProjectModal(self.agents), on_add_done)
+
+            elif bid == "btn-scan-projects":
+                def on_scan_done(count):
+                    self.populate_projects_table()
+                    self.notify(f"Discovered and registered {count} project(s)!", title="Scan Complete", severity="information")
+                self.push_screen(DesktopProjectScanModal(), on_scan_done)
+
+            elif bid == "btn-fav-project":
+                p = self.get_selected_project()
+                if p:
+                    fav = toggle_project_favorite(p["id"])
+                    self.populate_projects_table()
+                    self.notify(f"Project '{p['name']}' favorite: {'★ Favorited' if fav else '☆ Unfavorited'}")
+
+            elif bid == "btn-launch-project-agent":
+                p = self.get_selected_project()
+                if p:
+                    ag = p.get("default_agent") or "claude"
+                    ok, msg, pid = launch_agent_in_project(p["path"], agent_id=ag)
+                    if ok and pid:
+                        register_session(p["path"], ag, pid, f"{ag} {p['path']}")
+                        self.populate_sessions_table()
+                    self.notify(msg, title="Agent Launch", severity="information" if ok else "error")
+
+            elif bid == "btn-proj-explorer":
+                p = self.get_selected_project()
+                if p:
+                    ok, msg = open_in_explorer(p["path"])
+                    self.notify(msg, title="Explorer", severity="information" if ok else "error")
+
+            elif bid == "btn-proj-terminal":
+                p = self.get_selected_project()
+                if p:
+                    ok, msg = open_in_terminal(p["path"])
+                    self.notify(msg, title="Terminal", severity="information" if ok else "error")
+
+            elif bid == "btn-proj-vscode":
+                p = self.get_selected_project()
+                if p:
+                    ok, msg = open_in_vscode(p["path"])
+                    self.notify(msg, title="VS Code", severity="information" if ok else "error")
+
+            elif bid == "btn-proj-config":
+                p = self.get_selected_project()
+                if p:
+                    meta = inspect_project_metadata(p["path"])
+                    inst = meta.get("instructions", [])
+                    target_file = inst[0]["path"] if inst else os.path.join(p["path"], "CLAUDE.md")
+                    if not os.path.exists(target_file):
+                        try:
+                            with open(target_file, "w", encoding="utf-8") as f:
+                                f.write(f"# {p['name']}\n\nProject guidelines and instructions.\n")
+                        except Exception:
+                            pass
+                    self.push_screen(DesktopConfigEditorModal(target_file))
+
+            elif bid == "btn-remove-project":
+                p = self.get_selected_project()
+                if p:
+                    delete_project(p["id"])
+                    self.populate_projects_table()
+                    self.notify(f"Removed '{p['name']}' from registry (disk files preserved).", title="Project Removed")
+
+            elif bid == "btn-refresh-sessions":
+                self.populate_sessions_table()
+                self.notify("Refreshed active process sessions.", title="Sessions")
+
+            elif bid == "btn-kill-session":
+                try:
+                    table = self.query_one("#table-sessions", DataTable)
+                    if table.cursor_row is not None:
+                        sessions = list_sessions()
+                        if 0 <= table.cursor_row < len(sessions):
+                            s = sessions[table.cursor_row]
+                            ok, msg = terminate_session(s["id"])
+                            self.populate_sessions_table()
+                            self.notify(msg, title="Terminate Process", severity="information" if ok else "error")
+                except Exception as e:
+                    self.notify(f"Error terminating session: {e}", severity="error")
+
             elif bid == "btn-warehouses":
                 ag = self.agents.get(self.selected_key)
                 def on_wh_done(_):
@@ -7874,14 +8298,20 @@ if HAS_TEXTUAL:
                 self.load_explorer_category(str(event.value))
 
         def on_input_changed(self, event: Input.Changed):
-            if event.input.id == "skills-filter":
+            if event.input.id == "projects-filter":
+                self.populate_projects_table()
+            elif event.input.id == "skills-filter":
                 self.populate_skills_table()
             elif event.input.id == "features-filter":
                 self.populate_features_table()
 
         def on_data_table_row_selected(self, event: DataTable.RowSelected):
             tid = event.data_table.id
-            if tid == "table-models":
+            if tid == "table-projects":
+                p = self.get_selected_project()
+                if p:
+                    self.update_project_details_card(p)
+            elif tid == "table-models":
                 coord = event.data_table.cursor_coordinate
                 ag = self.agents.get(self.selected_key)
                 m_info = get_agent_models_and_providers(ag)
@@ -8266,6 +8696,10 @@ if HAS_TEXTUAL:
                     self.action_ping_active()
                 elif ctype == "refresh":
                     self.action_refresh_data()
+                elif ctype == "project_add":
+                    self.push_screen(DesktopAddProjectModal(self.agents), lambda _: self.populate_projects_table())
+                elif ctype == "project_scan":
+                    self.push_screen(DesktopProjectScanModal(), lambda _: self.populate_projects_table())
                 elif ctype == "uninstall_agent":
                     self.action_uninstall_agent()
                 elif ctype == "agent_store":
@@ -8469,6 +8903,13 @@ if HAS_TEXTUAL:
 
 def main():
     """Main CLI / GUI entrypoint for OmniAgent Manager (pip console_script & direct execution)."""
+    # Route project and agent subcommands
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("project", "projects"):
+        from omni_core.cli_projects import handle_project_cli
+        sys.exit(handle_project_cli(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1].lower() in ("agent", "agents") and not sys.argv[1].startswith("-"):
+        from omni_core.cli_projects import handle_agent_cli
+        sys.exit(handle_agent_cli(sys.argv[2:]))
     if "-h" in sys.argv or "--help" in sys.argv:
         print("""OmniAgent Manager v4.1.0 - Universal AI Agent Control Hub
 Usage:

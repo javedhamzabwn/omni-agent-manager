@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omni-agent-manager"
-version = "4.1.0"
+version = "4.2.0"
 description = "The Universal Control Hub & Customizer for AI Coding Agents, Models, Skills & MCP Servers"
 readme = "README.md"
 authors = [{ name = "Javed Hamza" }]
@@ -34,4 +34,5 @@ omni-agent-manager = "omni_agent_manager:main"
 
 [tool.setuptools]
 py-modules = ["omni_agent_manager"]
+packages = ["omni_core"]
 

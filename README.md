@@ -1,6 +1,6 @@
 # 🌐 OmniAgent Manager
 
-[![Version: 4.1.0](https://img.shields.io/badge/Version-4.1.0-blueviolet.svg)](pyproject.toml)
+[![Version: 4.2.0](https://img.shields.io/badge/Version-4.2.0-blueviolet.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://python.org)
 [![Package: pip installable](https://img.shields.io/badge/Package-pip%20install%20.-orange.svg)](pyproject.toml)
@@ -8,7 +8,7 @@
 [![TUI Engine: Textual 8.2+](https://img.shields.io/badge/TUI-Textual%208.2%2B-magenta.svg)](https://textual.textualize.io)
 [![Platform: Windows | Linux | macOS](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com)
 
-**OmniAgent Manager** is an enterprise-grade operational control hub, configuration orchestrator, and diagnostics cockpit for modern AI coding agents, model providers, custom agent skills, and Model Context Protocol (MCP) tool servers.
+**OmniAgent Manager** is an enterprise-grade operational control hub, project workspace manager, configuration orchestrator, and diagnostics cockpit for modern AI coding agents, model providers, custom agent skills, and Model Context Protocol (MCP) tool servers.
 
 Instead of hunting through dozens of fragmented directories, cryptic JSON/TOML configuration files, and incompatible schema definitions across disparate AI assistants, OmniAgent Manager aggregates your entire AI development fleet into a unified, high-performance control plane.
 
@@ -19,27 +19,28 @@ Instead of hunting through dozens of fragmented directories, cryptic JSON/TOML c
 - [The Problem OmniAgent Manager Solves](#-the-problem-omniagent-manager-solves)
 - [Core Architectural Pillars & Technical Benefits](#-core-architectural-pillars--technical-benefits)
 - [Feature Deep-Dive](#-feature-deep-dive)
-  - [1. Universal AI Models & Providers Dashboard](#1-universal-ai-models--providers-dashboard)
-  - [2. MCP Presets & Workspaces (1-Click Fleet Synchronization)](#2-mcp-presets--workspaces-1-click-fleet-synchronization)
-  - [3. Live MCP Health Checks & Heartbeats](#3-live-mcp-health-checks--heartbeats)
-  - [4. 1-Click MCP Registry Auto-Installer](#4-1-click-mcp-registry-auto-installer)
-  - [5. Fuzzy Command Palette (Ctrl+P / F1)](#5-fuzzy-command-palette-ctrlp--f1)
-  - [6. 1-Click "Restore .bak" Rollback Manager](#6-1-click-restore-bak-rollback-manager)
-  - [7. Responsive Sidebar Auto-Collapse (Icon Rail)](#7-responsive-sidebar-auto-collapse-icon-rail)
-  - [8. Portable Bundle Export & Import (omni-profile.json)](#8-portable-bundle-export--import-omni-profilejson)
-  - [9. Live Token & Cost Gauges (abtop Pattern)](#9-live-token--cost-gauges-abtop-pattern)
-  - [10. Online Skill & Plugin Auto-Installer](#10-online-skill--plugin-auto-installer)
-  - [11. Deep Agent Filesystem Explorer (20 Categories, 150+ Paths)](#11-deep-agent-filesystem-explorer-20-categories-150-paths)
-  - [12. Automated Safety, AST Validation & Atomic Backups](#12-automated-safety-ast-validation--atomic-backups)
-  - [13. MCP Tool Runner & Schema Inspector (Zero LLM Tokens)](#13-mcp-tool-runner--schema-inspector-zero-llm-tokens)
-  - [14. Sub-Tool Context Trimmer](#14-sub-tool-context-trimmer)
-  - [15. Fleet Process & Local Engine Radar (psutil Live Monitor)](#15-fleet-process--local-engine-radar-psutil-live-monitor)
-  - [16. Universal Agent Config JSON Feature Switchboard](#16-universal-agent-config-json-feature-switchboard)
+  - [1. Universal Project Registry & Workspace Hub (New in v4.2.0)](#1-universal-project-registry--workspace-hub-new-in-v420)
+  - [2. Native Agent Adapter Architecture (New in v4.2.0)](#2-native-agent-adapter-architecture-new-in-v420)
+  - [3. Safe Markdown & Configuration Editor (New in v4.2.0)](#3-safe-markdown--configuration-editor-new-in-v420)
+  - [4. Managed Process & Session Tracking (New in v4.2.0)](#4-managed-process--session-tracking-new-in-v420)
+  - [5. Universal AI Models & Providers Dashboard](#5-universal-ai-models--providers-dashboard)
+  - [6. MCP Presets & Workspaces (1-Click Fleet Synchronization)](#6-mcp-presets--workspaces-1-click-fleet-synchronization)
+  - [7. Live MCP Health Checks & Heartbeats](#7-live-mcp-health-checks--heartbeats)
+  - [8. 1-Click MCP Registry Auto-Installer (Top 28 MCPs)](#8-1-click-mcp-registry-auto-installer)
+  - [9. Fuzzy Command Palette (Ctrl+P / F1)](#9-fuzzy-command-palette-ctrlp--f1)
+  - [10. 1-Click "Restore .bak" Rollback Manager](#10-1-click-restore-bak-rollback-manager)
+  - [11. Responsive Sidebar Auto-Collapse (Icon Rail)](#11-responsive-sidebar-auto-collapse-icon-rail)
+  - [12. Portable Bundle Export & Import (omni-profile.json)](#12-portable-bundle-export--import-omni-profilejson)
+  - [13. Live Token & Cost Gauges (abtop Pattern)](#13-live-token--cost-gauges-abtop-pattern)
+  - [14. Online Skill & Plugin Auto-Installer](#14-online-skill--plugin-auto-installer)
+  - [15. Deep Agent Filesystem Explorer (20 Categories, 150+ Paths)](#15-deep-agent-filesystem-explorer-20-categories-150-paths)
+  - [16. Automated Safety, AST Validation & Atomic Backups](#16-automated-safety-ast-validation--atomic-backups)
+  - [17. MCP Tool Runner & Schema Inspector (Zero LLM Tokens)](#17-mcp-tool-runner--schema-inspector-zero-llm-tokens)
+  - [18. Sub-Tool Context Trimmer](#18-sub-tool-context-trimmer)
+  - [19. Fleet Process & Local Engine Radar (psutil Live Monitor)](#19-fleet-process--local-engine-radar-psutil-live-monitor)
+  - [20. Universal Agent Config JSON Feature Switchboard](#20-universal-agent-config-json-feature-switchboard)
 - [Supported AI Agents & Runtimes](#-supported-ai-agents--runtimes)
 - [Installation & Setup](#-installation--setup)
-  - [Method 1: Global Pip Installation (Recommended)](#method-1-global-pip-installation-recommended)
-  - [Method 2: Standalone Windows Batch Launcher (Auto-Elevating)](#method-2-standalone-windows-batch-launcher-auto-elevating)
-  - [Method 3: Direct Git Clone & Run](#method-3-direct-git-clone--run)
 - [CLI Reference & Command Flags](#-cli-reference--command-flags)
 - [Keyboard Navigation & Shortcuts](#-keyboard-navigation--shortcuts)
 - [Directory Layout](#-directory-layout)
@@ -89,13 +90,42 @@ OmniAgent Manager eliminates these friction points by providing **one single sou
 
 ## ⚡ Feature Deep-Dive
 
-### 1. Universal AI Models & Providers Dashboard
+### 1. Universal Project Registry & Workspace Hub (New in v4.2.0)
+- **Local SQLite Database**: Zero-config SQLite database (`~/.omni/omni_agent_manager.db`) in WAL mode with real-time JSON sync (`~/.omni_projects.json`).
+- **Autonomous Project Discovery**: Background scanner recursively detects git repos and coding projects across common developer drives (`C:\Users`, `D:\`, `E:\`), identifying tech stacks (Python, Node, Rust, Go, C/C++) and agent instructions (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`).
+- **Workspace Launchpad**: 1-click launch from TUI or CLI into Windows Terminal, PowerShell, CMD, VS Code, Cursor, or direct File Explorer navigation.
+- **Favorites & Recents**: Fast bookmarking, pin to favorites, and automatic tracking of last-opened timestamps.
+
+### 2. Native Agent Adapter Architecture (New in v4.2.0)
+- **Extensible Base Adapter**: Standardized `BaseAgentAdapter` interface defining agent capabilities (`SUPPORTED`, `READ_ONLY`, `EDITABLE`, `NOT_SUPPORTED`).
+- **First-Class Agent Support**:
+  - `ClaudeCodeAdapter`: Manages `~/.claude.json`, project instructions `CLAUDE.md`, skills, and subagents.
+  - `CodexAdapter`: Handles `~/.codex/config.toml` and CODEX router rules.
+  - `GeminiAdapter`: Full Antigravity pipeline and Gemini instruction files (`GEMINI.md`).
+  - `OpenCodeAdapter`: Manages `opencode.json` and agent tool definitions.
+  - `AiderAdapter`: Discovers `.aider.conf.yml` and `.aider.model.settings.yml`.
+  - `CursorAdapter`: Scans `.cursor/rules/`, `.cursorrules`, and workspace settings.
+  - `GenericAdapter`: Fallback for any standard AI coding project.
+- **Agent Doctor**: Instant system health audit verifying installed CLIs, executable paths, version detection, config file health, and system permissions.
+
+### 3. Safe Markdown & Configuration Editor (New in v4.2.0)
+- **Multi-Format Parsing**: Built-in backend for JSON, YAML, TOML, and Markdown files.
+- **Syntax Pre-Validation & Linting**: Validates syntax before saving to prevent corrupting active agent configurations.
+- **Atomic File Swapping & Automatic `.bak`**: Every save operation creates a timestamped `.bak` backup and writes atomically via temporary sibling files to ensure zero data corruption.
+- **Unified Diff Generation**: Visual diff inspection before committing changes to disk.
+
+### 4. Managed Process & Session Tracking (New in v4.2.0)
+- **Session Registry**: Tracks active background agent processes, shell sessions, and worker threads.
+- **Real-Time Liveness Checking**: Uses `psutil` (with Windows `tasklist` fallback) to track PID health, CPU utilization, and memory RSS footprint.
+- **Safe Termination**: Terminate runaway or zombie agent processes cleanly with 1-click or CLI command.
+
+### 5. Universal AI Models & Providers Dashboard
 - **Fleet-Wide Discovery**: Detects active installations and config files of 11+ AI coding agents.
 - **Provider Aggregator**: Connect local engines (Ollama on `11434`, LM Studio on `1234`, vLLM on `8000`) and cloud endpoints (OpenRouter, DeepSeek, Anthropic, OpenAI, Groq).
 - **Universal 1-Click Broadcast**: Deploy API keys, custom base URLs, and active model IDs across all detected agents simultaneously.
 - **Real-Time Endpoint Ping**: Probe round-trip latency to remote model APIs before launching workflows.
 
-### 2. MCP Presets & Workspaces (1-Click Fleet Synchronization)
+### 6. MCP Presets & Workspaces (1-Click Fleet Synchronization)
 - **Task-Based Tool Grouping**: Stop loading all MCPs at once. Use curated workspaces:
   - `🌐 Full-Stack Web`: `filesystem`, `github`, `brave-search`, `puppeteer`, `fetch`
   - `📊 Data Science & SQL`: `postgres`, `sqlite`, `filesystem`, `memory`
@@ -106,7 +136,7 @@ OmniAgent Manager eliminates these friction points by providing **one single sou
 - **1-Click Fleet Broadcast**: Apply a preset to the active agent, or click **"⚡ 1-Click Broadcast All 11 Agents"** to atomically update the entire fleet in milliseconds.
 - **Manual Management Preserved**: Individual per-MCP toggling remains completely intact in the MCPs tab.
 
-### 3. Live MCP Health Checks & Heartbeats
+### 7. Live MCP Health Checks & Heartbeats
 - **Sub-Second Probing**:
   - **Stdio Processes**: Spawns test subprocess, transmits standard MCP JSON-RPC initialize payload, and measures round-trip latency.
   - **HTTP / SSE Endpoints**: Sends async GET/HEAD requests to verify endpoint connectivity.
@@ -116,7 +146,7 @@ OmniAgent Manager eliminates these friction points by providing **one single sou
   - `⚠ STOPPED / FAILED` (Amber / Red)
 - **CLI Mode**: Run `omni-agent --health` to probe all servers from your terminal without opening the GUI.
 
-### 4. 1-Click MCP Registry Auto-Installer
+### 8. 1-Click MCP Registry Auto-Installer
 - **Verified Catalog**:
   - `GitHub MCP` (`@modelcontextprotocol/server-github`)
   - `PostgreSQL MCP` (`@modelcontextprotocol/server-postgres`)
@@ -131,19 +161,19 @@ OmniAgent Manager eliminates these friction points by providing **one single sou
   - `Context Mode Sandbox` (`@context-mode/mcp`)
 - **Automated Parameter Injection**: Prompts for required API keys/connection strings and injects sanitized configuration into target agent files.
 
-### 5. Fuzzy Command Palette (Ctrl+P / F1)
+### 9. Fuzzy Command Palette (Ctrl+P / F1)
 - **Quick-Access Modal**: Press `Ctrl+P` or `F1` from anywhere in the app to open the floating command palette.
 - **Fuzzy Search Scope**: Switch agents, jump between tabs, apply presets, run health checks, trigger backups, export profiles, and change themes in seconds.
 
-### 6. 1-Click "Restore .bak" Rollback Manager
+### 10. 1-Click "Restore .bak" Rollback Manager
 - **Visual Snapshot History**: Press `Ctrl+R` or click `↺ Restore .bak` to view all timestamped configuration backups.
 - **Instant Rollback**: Select any historical backup and restore it with one click. OmniAgent Manager automatically creates a `.pre_restore.bak` safety copy before restoring.
 
-### 7. Responsive Sidebar Auto-Collapse (Icon Rail)
+### 11. Responsive Sidebar Auto-Collapse (Icon Rail)
 - **Intelligent Layout**: On displays or terminals with `< 95` columns, the sidebar automatically collapses to an 10-column icon rail (`● AGY`, `● CLD`, `● OPC`, `● CUR`, etc.).
 - **Automatic Expansion**: When resized back to `>= 95` columns, full agent titles and badges return automatically.
 
-### 8. Portable Bundle Export & Import (omni-profile.json)
+### 12. Portable Bundle Export & Import (omni-profile.json)
 - **Fleet Snapshot**: Export your active models, endpoints, enabled skills, and active MCP servers into a single portable `omni-profile.json` file.
 - **Cross-Machine Sync**: Import `omni-profile.json` on a new workstation to configure all 11 local AI agents automatically.
 - **CLI Commands**:
@@ -152,20 +182,20 @@ OmniAgent Manager eliminates these friction points by providing **one single sou
   omni-agent --import [path]
   ```
 
-### 9. Live Token & Cost Gauges (abtop Pattern)
+### 13. Live Token & Cost Gauges (abtop Pattern)
 - **Context Overhead Tracking**: Live banner computes approximate JSON schema token footprint across active MCP tools (~3.85 characters/token).
 - **Headroom Bar**: High-contrast visual bar displaying remaining context window capacity:
   ```
   Tools Context Overhead: 8,420 tokens (6.6% of 128k) [██░░░░░░░░░░░░] Headroom: 119.5k free  Est. Cost: ~$0.025/req (Claude)
   ```
 
-### 10. Online Skill & Plugin Auto-Installer
+### 14. Online Skill & Plugin Auto-Installer
 - **Multi-Source Support**:
   - **Git Clone**: Clone skill repositories directly into the agent's active skills folder.
   - **Direct URL**: Download raw `SKILL.md` documents directly from GitHub or web links.
   - **NPX Package**: Run official npx package installers with one click.
 
-### 11. Deep Agent Filesystem Explorer (20 Categories, 150+ Paths)
+### 15. Deep Agent Filesystem Explorer (20 Categories, 150+ Paths)
 Consolidates the complete filesystem catalog of modern AI coding infrastructure:
 1. **Claude Code CLI**: Global config (`.claude.json`), project instructions, custom skills, subagents.
 2. **Claude Desktop & Cowork 3P**: Desktop app config, MCP servers, sessions, VM environments.
@@ -194,24 +224,24 @@ Consolidates the complete filesystem catalog of modern AI coding infrastructure:
 - 📋 **Copy Path**: Copies clean, absolute path directly to your OS clipboard.
 - 💻 **Terminal Here**: Spawns an interactive shell pre-navigated to the target directory.
 
-### 12. Automated Safety, AST Validation & Atomic Backups
+### 16. Automated Safety, AST Validation & Atomic Backups
 - **Automatic `.bak` Snapshots**: Every write operation creates a timestamped backup before touching target files.
 - **Atomic File Swapping**: Configuration files are written to a temporary sibling file and renamed atomically to prevent partial writes.
 - **Syntax Pre-Validation**: Validates JSON and TOML structures before saving to prevent corrupting active agent configurations.
 
-### 13. MCP Tool Runner & Schema Inspector (Zero LLM Tokens)
+### 17. MCP Tool Runner & Schema Inspector (Zero LLM Tokens)
 - **Direct Child Process Probing**: Connects directly to the configured MCP server process over standard JSON-RPC protocol (`initialize` → `notifications/initialized` → `tools/list`).
 - **Interactive Tool Runner**: Test and execute any tool live inside the TUI without wasting prompt tokens or calling LLM APIs.
   - Pass JSON arguments directly (e.g. `{"query": "search query"}`).
   - View raw structured output and verify parameters before deploying into autonomous agent workflows.
 - **Shortcut**: Press `I` on the MCP Tool Servers tab or click `🔍 Inspect & Trim Tools`.
 
-### 14. Sub-Tool Context Trimmer
+### 18. Sub-Tool Context Trimmer
 - **Surgical Context Reduction**: Large MCP servers often bundle 10–25 individual tools, injecting thousands of unwanted schema tokens into every LLM request.
 - **Per-Tool Disabling**: With one keypress (`Space`), disable individual tools within an MCP server (persisted in `.omni_trimmed_tools.json` and agent configuration).
 - **Instant Headroom Feedback**: The live context gauge immediately recalculates, displaying the exact tokens saved and cost reduction.
 
-### 15. Fleet Process & Local Engine Radar (psutil Live Monitor)
+### 19. Fleet Process & Local Engine Radar (psutil Live Monitor)
 - **Local AI Inference Engine Radar**: Probes listening ports in real time:
   - `Ollama Inference Engine` (Port `11434`)
   - `LM Studio Local Server` (Port `1234`)
@@ -221,7 +251,7 @@ Consolidates the complete filesystem catalog of modern AI coding infrastructure:
 - **Shortcut**: Press `O` or click `📡 Fleet Process Radar [O]`.
 - **CLI Mode**: Run `omni-agent --radar` for a fast terminal snapshot.
 
-### 16. Universal Agent Config JSON Feature Switchboard
+### 20. Universal Agent Config JSON Feature Switchboard
 - **Dynamic Configuration Discovery**: Recursively scans all configuration files associated with the active agent (`.claude.json`, `antigravity/config.json`, `cursor/settings.json`, `opencode.json`, etc.).
 - **Live Boolean Flag Switchboard**: Extracts hundreds of hidden boolean settings and experimental feature flags into a clean, searchable table.
 - **1-Click Atomic Toggling**: Press `Space` to toggle any setting on/off. OmniAgent Manager automatically creates a timestamped `.bak` safety backup and rewrites the JSON file atomically.
@@ -315,13 +345,13 @@ python omni_agent_manager.py
 ## ⌨️ CLI Reference & Command Flags
 
 ```
-OmniAgent Manager v4.1.0 - Universal AI Agent Control Hub
+OmniAgent Manager v4.2.0 - Universal AI Agent Control Hub & Project Workspace
 
 Usage:
-  omni-agent [OPTIONS]
-  omni-agent-manager [OPTIONS]
-  python omni_agent_manager.py [OPTIONS]
-  omni_agent_manager.bat [OPTIONS]
+  omni-agent [OPTIONS] [SUBCOMMAND]
+  omni-agent-manager [OPTIONS] [SUBCOMMAND]
+  python omni_agent_manager.py [OPTIONS] [SUBCOMMAND]
+  omni_agent_manager.bat [OPTIONS] [SUBCOMMAND]
 
 Options:
   -h, --help            Display help reference and exit
@@ -337,6 +367,21 @@ Options:
   --folders, --explorer Launch directly into 20-Category Folder Explorer
   --theme THEME         Launch with specified UI theme (e.g. github_dark, matrix_green)
   --no-admin            Skip Windows UAC elevation check
+
+Project Workspace Subcommands (v4.2.0):
+  omni-agent project list                       List all registered projects in the SQLite database
+  omni-agent project add <path> [--name NAME]   Register a project workspace directory
+  omni-agent project remove <path_or_name>      Unregister a project workspace
+  omni-agent project scan [--root DIR] [--depth N] Auto-discover projects across developer drives
+  omni-agent project open <name> [--editor ED]  Open project in configured editor (code, cursor, etc.)
+  omni-agent project launch <name> [--terminal T] Open project in terminal (wt, pwsh, cmd)
+  omni-agent project info <name>                Display comprehensive project details & instructions
+  omni-agent project fav <name>                 Toggle favorite status for quick access
+
+Native Agent Subcommands (v4.2.0):
+  omni-agent agent list                         List all supported agent adapters & capabilities
+  omni-agent agent detect                       Detect installed agents and active configs on host
+  omni-agent agent doctor                       Run deep health & configuration diagnostic on all agents
 ```
 
 ---
@@ -347,6 +392,8 @@ Options:
 |:---:|:---|:---|
 | `Ctrl+P` / `F1` | Global | Open **Fuzzy Command Palette** modal |
 | `Ctrl+B` | Global | **Toggle Sidebar** (Collapse to 100% full workspace width) |
+| `P` | Global | Switch to **Projects Workspace Hub** tab (v4.2.0) |
+| `X` | Global | Switch to **Active Sessions & Processes** tab (v4.2.0) |
 | `W` | Global | Switch to **MCP Presets & Workspaces** tab |
 | `M` | Global | Switch to **AI Models & Providers** tab |
 | `S` | Global | Switch to **Skills Lifecycle** tab |
@@ -356,7 +403,6 @@ Options:
 | `G` | Global | Switch to **Config Feature Flags Switchboard** tab |
 | `F` | Global | Switch to **20-Category Agent Explorer** tab |
 | `T` | Global | Open **Theme & Palette Selector** modal |
-| `P` | Models Tab | Run **Real-Time Ping Test** on active provider endpoint |
 | `Ctrl+R` | Global | Open **1-Click .bak Backup Rollback Manager** |
 | `Space` | Tables | **Toggle selected item** in-place (no cursor jumping) |
 | `Enter` | Tables | **Select / Apply** active item or execute primary action |
@@ -370,9 +416,27 @@ Options:
 
 ```
 omni-agent-manager/
-├── omni_agent_manager.py     # Complete standalone core engine (TUI, CLI, Models, Presets, Health, Registry)
+├── omni_agent_manager.py     # Desktop TUI & main entrypoint (Textual, CLI router, Explorer, Models, Presets)
 ├── omni_agent_manager.bat    # Windows launcher with robust UAC elevation handling
-├── pyproject.toml            # PEP 517/621 packaging (registers omni-agent & omni-agent-manager v4.0.0)
+├── omni_core/                # High-performance modular core engine (v4.2.0)
+│   ├── __init__.py           # Package exports & version metadata (v4.2.0)
+│   ├── paths.py              # Windows-first path normalizer, space escaping, executable & editor discovery
+│   ├── db.py                 # SQLite registry (~/.omni/omni_agent_manager.db, WAL mode) & JSON sync
+│   ├── projects.py           # Background project scanner, tech stack & agent instruction discovery
+│   ├── adapters.py           # Native agent adapters (Claude, Codex, Gemini, OpenCode, Aider, Cursor)
+│   ├── launcher.py           # Windows Terminal, PowerShell, CMD, VS Code, and Explorer safe process launcher
+│   ├── editor.py             # Multi-format safe config editor (JSON, YAML, TOML, MD) with AST validation & .bak
+│   ├── sessions.py           # Process session tracking, psutil liveness checker & clean process termination
+│   └── cli_projects.py       # Rich CLI subcommands for 'project' and 'agent' management
+├── tests/                    # Comprehensive automated test suite
+│   ├── test_paths.py         # Path normalization, executable & terminal detection tests
+│   ├── test_db.py            # SQLite schema, CRUD, favorites & JSON sync tests
+│   ├── test_discovery.py     # Background scanner, stack detector & instruction locator tests
+│   ├── test_adapters.py      # Native agent adapter capabilities & config discovery tests
+│   ├── test_editor.py        # Safe editor syntax validation, atomic backup & diff tests
+│   ├── test_cli_subcommands.py # CLI 'project' and 'agent' subcommand dispatch tests
+│   └── test_desktop_projects_pilot.py # TUI project & session workspace integration pilot tests
+├── pyproject.toml            # PEP 517/621 packaging (registers omni-agent & omni-agent-manager v4.2.0)
 ├── setup.py                  # Backward-compatible setuptools build script
 ├── requirements.txt          # Production dependencies (Textual, Rich)
 ├── LICENSE                   # MIT Open Source License
