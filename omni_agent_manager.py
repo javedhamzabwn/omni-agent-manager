@@ -47,6 +47,7 @@ except ImportError:
 try:
     from textual.app import App, ComposeResult
     from textual import events
+    from textual import work
     from textual.containers import Container, Horizontal, HorizontalScroll, Vertical, VerticalScroll, Grid
     from textual.widgets import (
         Header, Footer, Button, Static, Label, Input, DataTable,
@@ -675,19 +676,35 @@ def discover_installed_agents():
 
 # ================= MASTER SKILLS WAREHOUSES =================
 
-WAREHOUSES = [
-    ("claude-skills (973 Skills)", os.path.join(AI_PROJECTS, "github projects", "skills", "claude-skills")),
-    ("hermes-skills (309 Skills)", os.path.join(AI_PROJECTS, "github projects", "skills", "hermes-skills")),
-    ("marketingagentskills (33 Skills)", os.path.join(AI_PROJECTS, "github projects", "skills", "marketingagentskills")),
-    ("linkedin-skills (28 Skills)", os.path.join(AI_PROJECTS, "github projects", "skills", "linkedin-skills")),
-    ("agency-agents (325 Roles)", os.path.join(AI_PROJECTS, "github projects", "agents", "agency-agents")),
-    ("andrej-karpathy-skills", os.path.join(AI_PROJECTS, "github projects", "skills", "andrej-karpathy-skills")),
-    ("ELI5 Simplification", os.path.join(AI_PROJECTS, "github projects", "skills", "ELI5")),
-    ("health-skill Informatics", os.path.join(AI_PROJECTS, "github projects", "skills", "health-skill")),
-    ("last30days-skill Scraper", os.path.join(AI_PROJECTS, "github projects", "skills", "last30days-skill")),
-    ("prompt-master Engineering", os.path.join(AI_PROJECTS, "github projects", "skills", "prompt-master")),
-    ("claude-skills-llm-council", os.path.join(AI_PROJECTS, "github projects", "skills", "claude-skills-llm-council"))
-]
+def discover_warehouses():
+    candidates = [
+        os.path.join(AI_PROJECTS, "extensions, skillls, mpcs", "skills"),
+        os.path.join(AI_PROJECTS, "github projects", "skills"),
+        os.path.join(USERPROFILE, "Documents", "claude_files", "claude_projects"),
+        os.path.join(USERPROFILE, "Documents", "claude_files", "github clones"),
+        os.path.join(AI_PROJECTS, "github projects", "agents"),
+    ]
+    found = []
+    seen = set()
+    for base in candidates:
+        if os.path.exists(base):
+            for item in sorted(os.listdir(base)):
+                p = os.path.join(base, item)
+                if os.path.isdir(p) and item not in (".git", "node_modules", ".claude", ".superpowers"):
+                    sub_dirs = [d for d in os.listdir(p) if os.path.isdir(os.path.join(p, d))]
+                    label = f"{item} ({len(sub_dirs)} skills)" if sub_dirs else item
+                    if item not in seen:
+                        found.append((label, p))
+                        seen.add(item)
+    if not found:
+        found = [
+            ("claude-skills (973 Skills)", os.path.join(AI_PROJECTS, "github projects", "skills", "claude-skills")),
+            ("hermes-skills (309 Skills)", os.path.join(AI_PROJECTS, "github projects", "skills", "hermes-skills")),
+            ("marketingagentskills (33 Skills)", os.path.join(AI_PROJECTS, "github projects", "skills", "marketingagentskills")),
+        ]
+    return found
+
+WAREHOUSES = discover_warehouses()
 
 # ================= SYSTEM INSPECTION HELPERS =================
 
@@ -778,6 +795,51 @@ def read_mcp_config(agent_cfg):
         pass
 
     return active, disabled
+
+def add_mcp_server_entry(agent_cfg, server_name, command_or_url, args=None, env=None, is_sse=False):
+    """Adds or updates an MCP server configuration in the agent's mcp_file."""
+    if args is None: args = []
+    if env is None: env = {}
+    mf = agent_cfg.get("mcp_file")
+    mcp_format = agent_cfg.get("mcp_format", "standard_json")
+    if not mf:
+        return False, "No MCP configuration file path found for this agent"
+    try:
+        os.makedirs(os.path.dirname(mf), exist_ok=True)
+        data = {}
+        if os.path.exists(mf):
+            with open(mf, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        
+        backup_config_file(mf)
+
+        new_server = {}
+        if is_sse:
+            new_server = {"serverUrl": command_or_url}
+        else:
+            new_server = {
+                "command": command_or_url,
+                "args": args
+            }
+            if env:
+                new_server["env"] = env
+
+        if mcp_format == "opencode_json":
+            target_key = "mcp" if "mcp" in data else "mcpServers"
+            if target_key not in data: data[target_key] = {}
+            new_server["enabled"] = True
+            data[target_key][server_name] = new_server
+        else:
+            if "mcpServers" not in data: data["mcpServers"] = {}
+            new_server["disabled"] = False
+            new_server["enabled"] = True
+            data["mcpServers"][server_name] = new_server
+
+        with open(mf, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return True, f"Registered MCP server '{server_name}' successfully!"
+    except Exception as e:
+        return False, str(e)
 
 def save_mcp_servers(agent_cfg, active_set):
     mcp_file = agent_cfg.get("mcp_file")
@@ -4521,6 +4583,253 @@ if HAS_TEXTUAL:
                 event.prevent_default()
                 self.dismiss(None)
 
+    class DesktopAddMCPModal(ModalScreen):
+        CSS = """
+        DesktopAddMCPModal {
+            align: center middle;
+        }
+        #add-mcp-box {
+            width: 78;
+            height: auto;
+            max-height: 90%;
+            background: $surface;
+            border: round $success;
+            padding: 1 2;
+        }
+        .field-label {
+            color: $primary;
+            margin-top: 1;
+        }
+        .btn-bar {
+            margin-top: 1;
+            height: 1;
+        }
+        .btn-bar Button {
+            height: 1;
+            margin-right: 1;
+        }
+        """
+        def __init__(self, agent_cfg):
+            super().__init__()
+            self.agent_cfg = agent_cfg
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="add-mcp-box"):
+                yield Label(f"[b green]⚡ ADD CUSTOM MCP SERVER: {self.agent_cfg['name'].upper()}[/b green]")
+                yield Label("Server Name (e.g. 'github', 'sqlite', 'memory'):", classes="field-label")
+                yield Input(placeholder="e.g. my-mcp-server", id="in-mcp-name")
+                yield Label("Command or Executable (e.g. 'npx', 'python', 'uvx', 'node'):", classes="field-label")
+                yield Input(placeholder="npx", id="in-mcp-cmd", value="npx")
+                yield Label("Arguments (space-separated, e.g. '-y @modelcontextprotocol/server-filesystem C:/'):", classes="field-label")
+                yield Input(placeholder="-y @modelcontextprotocol/server-...", id="in-mcp-args")
+                yield Label("Environment Variables (Optional, JSON or KEY=VAL, comma-separated):", classes="field-label")
+                yield Input(placeholder="e.g. GITHUB_TOKEN=ghp_xxx or empty", id="in-mcp-env")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("Save & Activate", id="btn-save-mcp", variant="success")
+                    yield Button("Cancel [Esc]", id="btn-cancel-mcp", variant="error")
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-cancel-mcp":
+                self.dismiss(None)
+            elif bid == "btn-save-mcp":
+                name = self.query_one("#in-mcp-name", Input).value.strip()
+                if not name:
+                    self.notify("Server name cannot be empty", title="Error", severity="error")
+                    return
+                cmd = self.query_one("#in-mcp-cmd", Input).value.strip()
+                if not cmd:
+                    self.notify("Command cannot be empty", title="Error", severity="error")
+                    return
+                raw_args = self.query_one("#in-mcp-args", Input).value.strip()
+                args = raw_args.split() if raw_args else []
+                raw_env = self.query_one("#in-mcp-env", Input).value.strip()
+                env = {}
+                if raw_env:
+                    if raw_env.startswith("{") and raw_env.endswith("}"):
+                        try: env = json.loads(raw_env)
+                        except Exception: pass
+                    else:
+                        for pair in raw_env.split(","):
+                            if "=" in pair:
+                                k, v = pair.split("=", 1)
+                                env[k.strip()] = v.strip()
+                ok, msg = add_mcp_server_entry(self.agent_cfg, name, cmd, args=args, env=env)
+                self.dismiss((ok, msg))
+
+        def on_key(self, event):
+            if event.key == "escape":
+                event.prevent_default()
+                self.dismiss(None)
+
+    class DesktopWarehouseModal(ModalScreen):
+        CSS = """
+        DesktopWarehouseModal {
+            align: center middle;
+        }
+        #warehouse-box {
+            width: 96;
+            height: 36;
+            background: $surface;
+            border: round $primary;
+            padding: 1 2;
+        }
+        #warehouse-header {
+            text-style: bold;
+            color: $accent;
+            margin-bottom: 1;
+        }
+        #sel-warehouse {
+            margin-bottom: 1;
+        }
+        #warehouse-search {
+            margin-bottom: 1;
+        }
+        #table-warehouse-skills {
+            height: 18;
+            margin-bottom: 1;
+        }
+        .btn-bar {
+            height: 1;
+            margin-top: 1;
+        }
+        .btn-bar Button {
+            height: 1;
+            margin-right: 1;
+        }
+        """
+        def __init__(self, agent_cfg, all_agents):
+            super().__init__()
+            self.agent_cfg = agent_cfg
+            self.all_agents = all_agents
+            self.current_warehouse_path = WAREHOUSES[0][1] if WAREHOUSES else ""
+            self.skills_found = {}
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="warehouse-box"):
+                yield Label("[b cyan]📦 MASTER SKILLS & ROLES WAREHOUSE BROWSER[/b cyan]", id="warehouse-header")
+                wh_options = [(name, path) for name, path in WAREHOUSES]
+                default_val = WAREHOUSES[0][1] if WAREHOUSES else Select.BLANK
+                yield Select(options=wh_options, value=default_val, id="sel-warehouse", prompt="Choose Warehouse...")
+                yield Input(placeholder="🔍 Type to filter skills in this warehouse...", id="warehouse-search")
+                yield DataTable(id="table-warehouse-skills")
+                with Horizontal(classes="btn-bar"):
+                    yield Button("Import to Active Agent [Space]", id="btn-import-active", variant="success")
+                    yield Button("⚡ Broadcast to ALL Agents", id="btn-import-all", variant="primary")
+                    yield Button("Close [Esc]", id="btn-close-wh", variant="error")
+
+        def on_mount(self):
+            t = self.query_one("#table-warehouse-skills", DataTable)
+            t.add_columns("Status", "Skill / Role Name", "Source File / Dir", "Action")
+            t.cursor_type = "row"
+            self.load_skills_from_warehouse()
+
+        def on_select_changed(self, event: Select.Changed):
+            if event.select.id == "sel-warehouse" and event.value != Select.BLANK:
+                self.current_warehouse_path = str(event.value)
+                self.load_skills_from_warehouse()
+
+        def on_input_changed(self, event: Input.Changed):
+            if event.input.id == "warehouse-search":
+                self.populate_skills_view()
+
+        def load_skills_from_warehouse(self):
+            w_path = self.current_warehouse_path
+            self.skills_found = {}
+            if w_path and os.path.exists(w_path):
+                for item in sorted(os.listdir(w_path)):
+                    p = os.path.join(w_path, item)
+                    if os.path.isdir(p) and item not in (".git", "node_modules", ".claude"):
+                        self.skills_found[item] = p
+                    elif item.endswith(".md") and not item.startswith("README"):
+                        sname = item[:-3]
+                        self.skills_found[sname] = p
+            self.populate_skills_view()
+
+        def populate_skills_view(self):
+            t = self.query_one("#table-warehouse-skills", DataTable)
+            t.clear()
+            q = ""
+            try:
+                q = self.query_one("#warehouse-search", Input).value.strip().lower()
+            except Exception:
+                pass
+            
+            act_s, _ = get_agent_skills(self.agent_cfg)
+            act_set = set(act_s)
+
+            filtered = [k for k in self.skills_found.keys() if (q in k.lower())] if q else list(self.skills_found.keys())
+            for idx, sname in enumerate(filtered):
+                src = self.skills_found[sname]
+                is_deployed = (sname in act_set)
+                st = "[bold #a6e3a1]● INSTALLED[/bold #a6e3a1]" if is_deployed else "[dim]○ AVAILABLE[/dim]"
+                act = "[bold #89b4fa][ Import / Space ][/bold #89b4fa]"
+                t.add_row(st, sname, os.path.basename(src), act, key=f"wh-{idx}")
+
+        def import_selected_skill(self, broadcast=False):
+            t = self.query_one("#table-warehouse-skills", DataTable)
+            if t.cursor_row is None:
+                self.notify("Please select a skill in the table first", title="Warning", severity="warning")
+                return
+            q = ""
+            try:
+                q = self.query_one("#warehouse-search", Input).value.strip().lower()
+            except Exception:
+                pass
+            filtered = [k for k in self.skills_found.keys() if (q in k.lower())] if q else list(self.skills_found.keys())
+            if not (0 <= t.cursor_row < len(filtered)):
+                return
+            sname = filtered[t.cursor_row]
+            src = self.skills_found[sname]
+
+            target_dirs = []
+            if broadcast:
+                for ag in self.all_agents.values():
+                    if ag.get("skills_dir"):
+                        target_dirs.append(ag["skills_dir"])
+            else:
+                if self.agent_cfg.get("skills_dir"):
+                    target_dirs.append(self.agent_cfg["skills_dir"])
+
+            imported_count = 0
+            for t_dir in target_dirs:
+                os.makedirs(t_dir, exist_ok=True)
+                dst = os.path.join(t_dir, sname)
+                try:
+                    if os.path.isdir(src):
+                        if os.path.exists(dst): shutil.rmtree(dst)
+                        shutil.copytree(src, dst)
+                    else:
+                        os.makedirs(dst, exist_ok=True)
+                        shutil.copy2(src, os.path.join(dst, "SKILL.md"))
+                    imported_count += 1
+                except Exception:
+                    pass
+
+            self.populate_skills_view()
+            dest_desc = "all agents" if broadcast else self.agent_cfg["name"]
+            self.notify(f"Imported '{sname}' into {dest_desc}!", title="Skill Imported", severity="information")
+
+        def on_data_table_row_selected(self, event: DataTable.RowSelected):
+            self.import_selected_skill(broadcast=False)
+
+        def on_button_pressed(self, event: Button.Pressed):
+            bid = event.button.id
+            if bid == "btn-import-active":
+                self.import_selected_skill(broadcast=False)
+            elif bid == "btn-import-all":
+                self.import_selected_skill(broadcast=True)
+            elif bid == "btn-close-wh":
+                self.dismiss(None)
+
+        def on_key(self, event):
+            if event.key == "space":
+                event.prevent_default()
+                self.import_selected_skill(broadcast=False)
+            elif event.key == "escape":
+                event.prevent_default()
+                self.dismiss(None)
+
     class AgentCustomizerDesktopApp(App):
         TITLE = "OmniAgent Manager"
         SUB_TITLE = "Universal AI Coding Agent Control Hub v4.1.0"
@@ -4644,9 +4953,54 @@ if HAS_TEXTUAL:
         }
         Button {
             border: none;
-            min-width: 12;
-            height: 3;
+            height: 1;
+            min-width: 6;
             padding: 0 1;
+            margin-right: 1;
+            text-style: bold;
+        }
+        Button:hover {
+            opacity: 85%;
+        }
+        Button:focus {
+            text-style: bold underline;
+        }
+        .action-bar {
+            height: 1;
+            min-height: 1;
+            margin-bottom: 1;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+        .action-bar Button {
+            height: 1;
+            min-width: 6;
+            padding: 0 1;
+            margin-right: 1;
+            border: none;
+        }
+        #sidebar-footer Button {
+            height: 1;
+            width: 100%;
+            margin-bottom: 1;
+            padding: 0 1;
+            border: none;
+        }
+        .agent-item {
+            height: 1;
+            width: 100%;
+            margin-bottom: 0;
+            padding: 0 1;
+            border: none;
+            text-align: left;
+        }
+        .btn-bar {
+            margin-top: 1;
+            height: 1;
+        }
+        .btn-bar Button {
+            height: 1;
+            margin-right: 1;
         }
         """
 
@@ -4659,6 +5013,7 @@ if HAS_TEXTUAL:
             Binding("s", "open_skills_tab", "Skills", show=True),
             Binding("c", "open_mcps_tab", "MCPs", show=True),
             Binding("i", "open_tool_inspector", "Inspect Tools [I]", show=True),
+            Binding("h", "check_selected_mcp_health", "Ping Health [H]", show=True),
             Binding("o", "open_fleet_radar", "Radar [O]", show=True),
             Binding("g", "open_features_tab", "Config Flags [G]", show=True),
             Binding("f", "open_explorer_tab", "Folders", show=True),
@@ -4678,6 +5033,7 @@ if HAS_TEXTUAL:
             self.active_explorer_cat = "1"
             self.mcp_health_cache = {}
             self.cached_features = []
+            self.skill_filter_mode = 'all'
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
@@ -4720,9 +5076,10 @@ if HAS_TEXTUAL:
                             yield Input(placeholder="🔍 Type to filter skills in real time...", id="skills-filter")
                             with HorizontalScroll(classes="action-bar"):
                                 yield Button("⇄ Toggle [Space]", id="btn-skill-toggle", variant="primary")
+                                yield Button("Filter: [All Skills] ▾", id="btn-skill-filter-mode", variant="default")
                                 yield Button("✔ All", id="btn-skill-all", variant="success")
                                 yield Button("✖ None", id="btn-skill-none", variant="error")
-                                yield Button("🌐 Install Skill", id="btn-online-skill", variant="warning")
+                                yield Button("🌐 Install", id="btn-online-skill", variant="warning")
                                 yield Button("📦 Warehouses", id="btn-warehouses", variant="default")
                             yield DataTable(id="table-skills")
 
@@ -4730,10 +5087,11 @@ if HAS_TEXTUAL:
                             with HorizontalScroll(classes="action-bar"):
                                 yield Button("⇄ Toggle [Space]", id="btn-toggle-mcp", variant="primary")
                                 yield Button("🔍 Inspect [I]", id="btn-inspect-tools", variant="warning")
-                                yield Button("⚡ Health", id="btn-health-check", variant="default")
+                                yield Button("⚡ Health All", id="btn-health-check", variant="default")
+                                yield Button("⚡ Ping [H]", id="btn-ping-mcp-health", variant="default")
                                 yield Button("📦 Registry", id="btn-open-registry", variant="success")
                                 yield Button("↺ Rollback", id="btn-restore-bak", variant="error")
-                                yield Button("+ Add MCP", id="btn-add-mcp", variant="default")
+                                yield Button("+ Add MCP", id="btn-add-mcp", variant="success")
                             yield DataTable(id="table-mcps")
 
                         with TabPane("⚙️ Flags [G]", id="pane-features"):
@@ -5014,7 +5372,10 @@ if HAS_TEXTUAL:
         def populate_skills_table(self):
             ag = self.agents.get(self.selected_key)
             if not ag: return
-            act_s, _ = get_agent_skills(ag)
+
+            act_s, av_s = get_agent_skills(ag)
+            all_s = sorted(list(set(act_s).union(set(av_s))))
+            self.cached_skills = all_s
 
             saved_s_row = None
             try:
@@ -5034,7 +5395,16 @@ if HAS_TEXTUAL:
             except Exception:
                 pass
 
-            filtered_s = [s for s in self.cached_skills if q in s.lower()] if q else self.cached_skills
+            filtered_s = []
+            for s in all_s:
+                is_active = (s in act_s)
+                if self.skill_filter_mode == "active" and not is_active:
+                    continue
+                if self.skill_filter_mode == "stashed" and is_active:
+                    continue
+                if q and q not in s.lower():
+                    continue
+                filtered_s.append(s)
 
             for idx, s in enumerate(filtered_s):
                 is_active = (s in act_s)
@@ -5242,7 +5612,29 @@ if HAS_TEXTUAL:
                 self.action_stash_all_skills()
 
             elif bid == "btn-warehouses":
-                self.notify("Open Classic Mode (M -> [W]) for 1,350+ Warehouse Browser", title="Warehouses Hub")
+                ag = self.agents.get(self.selected_key)
+                def on_wh_done(_):
+                    self.load_active_agent_data()
+                self.push_screen(DesktopWarehouseModal(ag, self.agents), on_wh_done)
+
+            elif bid == "btn-add-mcp":
+                self.action_open_add_mcp_modal()
+
+            elif bid == "btn-ping-mcp-health":
+                self.action_check_selected_mcp_health()
+
+            elif bid == "btn-skill-filter-mode":
+                if self.skill_filter_mode == "all":
+                    self.skill_filter_mode = "active"
+                    lbl = "Filter: [Active Only] ▾"
+                elif self.skill_filter_mode == "active":
+                    self.skill_filter_mode = "stashed"
+                    lbl = "Filter: [Stashed Only] ▾"
+                else:
+                    self.skill_filter_mode = "all"
+                    lbl = "Filter: [All Skills] ▾"
+                self.query_one("#btn-skill-filter-mode", Button).label = lbl
+                self.populate_skills_table()
 
             elif bid == "btn-exp-explorer":
                 self.perform_explorer_action("explorer")
@@ -5324,12 +5716,24 @@ if HAS_TEXTUAL:
                 os.makedirs(sd, exist_ok=True)
                 os.makedirs(sav, exist_ok=True)
 
+                act_s, av_s = get_agent_skills(ag)
+                all_s = sorted(list(set(act_s).union(set(av_s))))
                 q = ""
                 try:
                     q = self.query_one("#skills-filter", Input).value.strip().lower()
                 except Exception:
                     pass
-                filtered = [s for s in self.cached_skills if q in s.lower()] if q else self.cached_skills
+
+                filtered = []
+                for s in all_s:
+                    is_active = (s in act_s)
+                    if self.skill_filter_mode == "active" and not is_active:
+                        continue
+                    if self.skill_filter_mode == "stashed" and is_active:
+                        continue
+                    if q and q not in s.lower():
+                        continue
+                    filtered.append(s)
 
                 if 0 <= saved_row < len(filtered):
                     skill_name = filtered[saved_row]
@@ -5528,25 +5932,72 @@ if HAS_TEXTUAL:
         def action_open_presets_tab(self):
             self.query_one("#tabs-main", TabbedContent).active = "pane-presets"
 
+        def update_single_mcp_health_row(self, server_name, ok, ms, detail):
+            try:
+                mcp_table = self.query_one("#table-mcps", DataTable)
+                for r_idx in range(mcp_table.row_count):
+                    row_data = mcp_table.get_row_at(r_idx)
+                    if len(row_data) > 1 and row_data[1] == server_name:
+                        badge = f"[bold #a6e3a1]● LIVE ({ms}ms)[/bold #a6e3a1]" if ok else f"[bold #fab387]⚠ {detail[:12]}[/bold #fab387]"
+                        mcp_table.update_cell_at((r_idx, 2), badge)
+                        break
+            except Exception:
+                pass
+
+        @work(thread=True)
+        def run_health_checks_worker(self, agent_cfg, all_servers, act_m):
+            total = len(act_m)
+            checked = 0
+            for s_name in act_m:
+                s_def = all_servers.get(s_name)
+                if not s_def: continue
+                checked += 1
+                self.app.call_from_thread(self.notify, f"Probing [{checked}/{total}]: {s_name}...", title="Health Check", timeout=1.0)
+                ok, ms, detail = probe_mcp_server_health(s_name, s_def, timeout=2.0)
+                self.mcp_health_cache[s_name] = (ok, ms, detail)
+                self.app.call_from_thread(self.update_single_mcp_health_row, s_name, ok, ms, detail)
+            self.app.call_from_thread(self.notify, f"Completed health check for all {checked} active servers!", title="Health Check Complete", severity="information")
+
+        @work(thread=True)
+        def run_single_mcp_health_worker(self, s_name, s_def):
+            self.app.call_from_thread(self.notify, f"Probing heartbeat for {s_name}...", title="Health Probe", timeout=1.5)
+            ok, ms, detail = probe_mcp_server_health(s_name, s_def, timeout=2.5)
+            self.mcp_health_cache[s_name] = (ok, ms, detail)
+            self.app.call_from_thread(self.update_single_mcp_health_row, s_name, ok, ms, detail)
+            st_msg = f"LIVE ({ms}ms)" if ok else f"FAILED: {detail}"
+            self.app.call_from_thread(self.notify, f"{s_name}: {st_msg}", title="Health Result", severity="information" if ok else "error")
+
         def action_run_health_checks(self):
             ag = self.agents.get(self.selected_key)
             if not ag: return
             act_m, dis_m = read_mcp_config(ag)
-            all_servers = {**act_m, **dis_m}
-            if not all_servers:
-                self.notify("No MCP servers configured for this agent", title="Health Check", severity="warning")
+            if not act_m:
+                self.notify("No active MCP servers configured to probe", title="Health Check", severity="warning")
                 return
+            all_servers = {**act_m, **dis_m}
+            self.run_health_checks_worker(ag, all_servers, act_m)
 
-            self.notify("Probing active MCP server heartbeats...", title="Health Check", severity="information")
-            checked_count = 0
-            for s_name, s_def in all_servers.items():
-                if s_name in act_m:
-                    ok, ms, detail = probe_mcp_server_health(s_name, s_def, timeout=2.0)
-                    self.mcp_health_cache[s_name] = (ok, ms, detail)
-                    checked_count += 1
+        def action_check_selected_mcp_health(self):
+            ag = self.agents.get(self.selected_key)
+            if not ag: return
+            act_m, dis_m = read_mcp_config(ag)
+            sorted_mcps = sorted(list(set(act_m.keys()).union(set(dis_m.keys()))))
+            if not sorted_mcps: return
+            mcp_table = self.query_one("#table-mcps", DataTable)
+            cur_idx = mcp_table.cursor_row if (mcp_table.cursor_row is not None and 0 <= mcp_table.cursor_row < len(sorted_mcps)) else 0
+            s_name = sorted_mcps[cur_idx]
+            s_def = act_m.get(s_name) or dis_m.get(s_name)
+            if s_def:
+                self.run_single_mcp_health_worker(s_name, s_def)
 
-            self.load_active_agent_data()
-            self.notify(f"Probed {checked_count} active servers successfully!", title="Health Check Complete")
+        def action_open_add_mcp_modal(self):
+            ag = self.agents.get(self.selected_key)
+            def on_mcp_done(res):
+                if res:
+                    ok, msg = res
+                    self.load_active_agent_data()
+                    self.notify(msg, title="Add MCP Server", severity="information" if ok else "error")
+            self.push_screen(DesktopAddMCPModal(ag), on_mcp_done)
 
         def action_open_registry_modal(self):
             ag = self.agents.get(self.selected_key)
