@@ -346,6 +346,7 @@ Options:
 | Key | Context | Action |
 |:---:|:---|:---|
 | `Ctrl+P` / `F1` | Global | Open **Fuzzy Command Palette** modal |
+| `Ctrl+B` | Global | **Toggle Sidebar** (Collapse to 100% full workspace width) |
 | `W` | Global | Switch to **MCP Presets & Workspaces** tab |
 | `M` | Global | Switch to **AI Models & Providers** tab |
 | `S` | Global | Switch to **Skills Lifecycle** tab |

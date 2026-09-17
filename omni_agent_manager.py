@@ -47,7 +47,7 @@ except ImportError:
 try:
     from textual.app import App, ComposeResult
     from textual import events
-    from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Grid
+    from textual.containers import Container, Horizontal, HorizontalScroll, Vertical, VerticalScroll, Grid
     from textual.widgets import (
         Header, Footer, Button, Static, Label, Input, DataTable,
         SelectionList, TabbedContent, TabPane, Switch, Rule, Select, OptionList
@@ -4042,6 +4042,7 @@ if HAS_TEXTUAL:
             ("preset:minimal", "🍱 Apply Preset: 🪶 Minimal / Lean (Filesystem only)", "preset"),
             ("preset:all_active", "🍱 Apply Preset: ✨ All Active (Enable All Configured)", "preset"),
             ("preset:broadcast", "⚡ 1-Click Broadcast Active Preset to ALL 11 Agents", "preset_broadcast"),
+            ("tool:sidebar", "◀ Toggle Sidebar Show/Hide [Ctrl+B]", "sidebar"),
             ("tool:health", "⚡ Run Live Health Checks on Active MCP Servers", "health"),
             ("tool:registry", "📦 Open 1-Click MCP Registry Auto-Installer", "registry"),
             ("tool:skill_install", "🌐 Install Online Skill (GitHub clone / URL)", "skill_install"),
@@ -4522,7 +4523,7 @@ if HAS_TEXTUAL:
 
     class AgentCustomizerDesktopApp(App):
         TITLE = "OmniAgent Manager"
-        SUB_TITLE = "Universal AI Coding Agent Control Hub v4.0"
+        SUB_TITLE = "Universal AI Coding Agent Control Hub v4.1.0"
         CSS = """
         Screen {
             background: $background;
@@ -4579,13 +4580,25 @@ if HAS_TEXTUAL:
             width: 1fr;
             padding: 0 1;
             background: $background;
+            overflow-x: auto;
+        }
+        Tabs > #tabs-scroll {
+            overflow-x: auto;
+        }
+        #tabs-list-bar, #tabs-list {
+            overflow-x: auto;
+        }
+        TabPane {
+            padding: 0;
+            overflow-x: auto;
         }
         #lbl-token-gauge {
             background: $surface;
             border: round $primary 40%;
             padding: 0 1;
             margin-bottom: 1;
-            height: 3;
+            height: auto;
+            min-height: 3;
             content-align: center middle;
         }
         .desktop-card {
@@ -4595,11 +4608,17 @@ if HAS_TEXTUAL:
             margin-bottom: 1;
         }
         .action-bar {
-            height: 3;
+            height: auto;
+            min-height: 3;
             margin-bottom: 1;
+            overflow-x: auto;
+            overflow-y: hidden;
         }
         .action-bar Button {
             margin-right: 1;
+            min-width: 8;
+            height: 3;
+            padding: 0 1;
             border: none;
         }
         #skills-filter {
@@ -4633,6 +4652,7 @@ if HAS_TEXTUAL:
 
         BINDINGS = [
             Binding("ctrl+p", "open_command_palette", "Palette [Ctrl+P]", show=True),
+            Binding("ctrl+b", "toggle_sidebar", "Sidebar [Ctrl+B]", show=True),
             Binding("f1", "open_command_palette", "Palette", show=False),
             Binding("w", "open_presets_tab", "Workspaces [W]", show=True),
             Binding("m", "open_models_tab", "Models", show=True),
@@ -4679,77 +4699,78 @@ if HAS_TEXTUAL:
                         yield Button("💾 Export omni-profile.json", id="btn-side-export", variant="default")
                         yield Button("📥 Import omni-profile.json", id="btn-side-import", variant="default")
                         yield Button("🔄 Refresh All Runtimes", id="btn-side-refresh", variant="default")
+                        yield Button("◀ Toggle Sidebar [Ctrl+B]", id="btn-toggle-side", variant="default")
 
                 with Vertical(id="workspace"):
                     yield Label("[dim]Calculating tool context overhead...[/dim]", id="lbl-token-gauge")
                     with TabbedContent(id="tabs-main"):
-                        with TabPane("🤖 AI Models & Providers", id="pane-models"):
+                        with TabPane("🤖 Models [M]", id="pane-models"):
                             with Vertical(classes="desktop-card", id="card-models"):
                                 yield Label("[b green]ACTIVE MODEL:[/b green] Loading...", id="lbl-active-model")
                                 yield Label("[b cyan]PROVIDER:[/b cyan] Loading...", id="lbl-active-prov")
                                 yield Label("[b yellow]ENDPOINT:[/b yellow] Loading...", id="lbl-active-url")
-                            with Horizontal(classes="action-bar"):
+                            with HorizontalScroll(classes="action-bar"):
                                 yield Button("+ Add Provider", id="btn-add-provider", variant="success")
                                 yield Button("⚡ Ping Test", id="btn-ping-test", variant="primary")
-                                yield Button("Set Active Model", id="btn-set-active", variant="default")
+                                yield Button("Set Active", id="btn-set-active", variant="default")
                                 yield Button("Toggle ON/OFF", id="btn-toggle-model", variant="default")
                             yield DataTable(id="table-models")
 
-                        with TabPane("⚡ Skills Management", id="pane-skills"):
+                        with TabPane("⚡ Skills [S]", id="pane-skills"):
                             yield Input(placeholder="🔍 Type to filter skills in real time...", id="skills-filter")
-                            with Horizontal(classes="action-bar"):
-                                yield Button("⇄ Toggle Selected [Space]", id="btn-skill-toggle", variant="primary")
-                                yield Button("✔ Activate All", id="btn-skill-all", variant="success")
-                                yield Button("✖ Stash All", id="btn-skill-none", variant="error")
-                                yield Button("🌐 Install Online Skill", id="btn-online-skill", variant="warning")
+                            with HorizontalScroll(classes="action-bar"):
+                                yield Button("⇄ Toggle [Space]", id="btn-skill-toggle", variant="primary")
+                                yield Button("✔ All", id="btn-skill-all", variant="success")
+                                yield Button("✖ None", id="btn-skill-none", variant="error")
+                                yield Button("🌐 Install Skill", id="btn-online-skill", variant="warning")
                                 yield Button("📦 Warehouses", id="btn-warehouses", variant="default")
                             yield DataTable(id="table-skills")
 
-                        with TabPane("🔌 MCP Tool Servers", id="pane-mcps"):
-                            with Horizontal(classes="action-bar"):
-                                yield Button("⇄ Toggle Selected [Space]", id="btn-toggle-mcp", variant="primary")
-                                yield Button("🔍 Inspect & Trim Tools [I]", id="btn-inspect-tools", variant="warning")
-                                yield Button("⚡ Run Health Checks", id="btn-health-check", variant="default")
-                                yield Button("📦 1-Click Registry", id="btn-open-registry", variant="success")
-                                yield Button("↺ Restore .bak", id="btn-restore-bak", variant="error")
-                                yield Button("+ Add MCP Server", id="btn-add-mcp", variant="default")
+                        with TabPane("🔌 MCPs [C]", id="pane-mcps"):
+                            with HorizontalScroll(classes="action-bar"):
+                                yield Button("⇄ Toggle [Space]", id="btn-toggle-mcp", variant="primary")
+                                yield Button("🔍 Inspect [I]", id="btn-inspect-tools", variant="warning")
+                                yield Button("⚡ Health", id="btn-health-check", variant="default")
+                                yield Button("📦 Registry", id="btn-open-registry", variant="success")
+                                yield Button("↺ Rollback", id="btn-restore-bak", variant="error")
+                                yield Button("+ Add MCP", id="btn-add-mcp", variant="default")
                             yield DataTable(id="table-mcps")
 
-                        with TabPane("⚙️ Config Feature Flags", id="pane-features"):
+                        with TabPane("⚙️ Flags [G]", id="pane-features"):
                             with Vertical(classes="desktop-card"):
                                 yield Label("[b cyan]⚙️ Universal Agent Config JSON Feature Switchboard[/b cyan]")
                                 yield Label("[dim]Discover, search, and toggle all boolean settings across config files. Changes automatically generate timestamped .bak backups.[/dim]")
                             yield Input(placeholder="🔍 Type to filter settings and feature flags in real time...", id="features-filter")
-                            with Horizontal(classes="action-bar"):
-                                yield Button("⇄ Toggle Selected [Space]", id="btn-toggle-feature", variant="primary")
-                                yield Button("↺ Restore .bak", id="btn-restore-feature-bak", variant="error")
-                                yield Button("🔄 Reload Flags", id="btn-reload-features", variant="default")
+                            with HorizontalScroll(classes="action-bar"):
+                                yield Button("⇄ Toggle [Space]", id="btn-toggle-feature", variant="primary")
+                                yield Button("↺ Rollback", id="btn-restore-feature-bak", variant="error")
+                                yield Button("🔄 Reload", id="btn-reload-features", variant="default")
                             yield DataTable(id="table-features")
 
-                        with TabPane("🍱 MCP Presets & Workspaces", id="pane-presets"):
+                        with TabPane("🍱 Presets [W]", id="pane-presets"):
                             with Vertical(classes="desktop-card"):
                                 yield Label("[b cyan]🍱 Task-Based MCP Workspaces & Fleet Synchronization[/b cyan]")
                                 yield Label("[dim]Switch active tool profiles across the selected agent or broadcast across all 11 agents simultaneously[/dim]")
-                            with Horizontal(classes="action-bar"):
-                                yield Button("Apply to Active Agent", id="btn-apply-preset", variant="primary")
-                                yield Button("⚡ 1-Click Broadcast All 11 Agents", id="btn-broadcast-preset", variant="success")
+                            with HorizontalScroll(classes="action-bar"):
+                                yield Button("Apply Active", id="btn-apply-preset", variant="primary")
+                                yield Button("⚡ Broadcast All 11 Agents", id="btn-broadcast-preset", variant="success")
                             yield DataTable(id="table-presets")
 
-                        with TabPane("📂 Agent Explorer", id="pane-explorer"):
-                            with Horizontal(classes="action-bar"):
+                        with TabPane("📂 Explorer [F]", id="pane-explorer"):
+                            with HorizontalScroll(classes="action-bar"):
                                 yield Select(options=[], id="sel-explorer-cat", prompt="Choose Category...")
                                 yield Button("📁 Explorer", id="btn-exp-explorer", variant="success")
                                 yield Button("📝 Editor", id="btn-exp-editor", variant="primary")
-                                yield Button("📋 Copy Path", id="btn-exp-copy", variant="default")
+                                yield Button("📋 Copy", id="btn-exp-copy", variant="default")
                                 yield Button("💻 Terminal", id="btn-exp-terminal", variant="warning")
                             yield DataTable(id="table-explorer")
 
-                        with TabPane("🌐 Universal Matrix", id="pane-global"):
+                        with TabPane("🌐 Matrix", id="pane-global"):
                             with Vertical(classes="desktop-card"):
                                 yield Label("[b cyan]Universal Multi-Agent Deployment Hub[/b cyan]")
                                 yield Label("[dim]View and sync models, providers, and skills across all installed coding agents[/dim]")
-                            with Horizontal(classes="action-bar"):
-                                yield Button("1-Click Broadcast Provider to ALL", id="btn-broadcast-prov", variant="success")
+                            with HorizontalScroll(classes="action-bar"):
+                                yield Button("⚡ Broadcast Provider to ALL", id="btn-broadcast-prov", variant="success")
                             yield DataTable(id="table-global")
             yield Footer()
 
@@ -4772,17 +4793,33 @@ if HAS_TEXTUAL:
         def on_resize(self, event: events.Resize) -> None:
             try:
                 sidebar = self.query_one("#sidebar")
-                if event.size.width < 95:
+                if event.size.width < 80:
+                    sidebar.styles.display = "none"
+                elif event.size.width < 105:
+                    sidebar.styles.display = "block"
                     sidebar.styles.width = 10
                     for k in self.agent_keys:
                         btn = self.query_one(f"#ag-{k}", Button)
                         btn.label = f"● {k[:3].upper()}"
                 else:
+                    sidebar.styles.display = "block"
                     sidebar.styles.width = 33
                     for k in self.agent_keys:
                         btn = self.query_one(f"#ag-{k}", Button)
                         name = self.agents[k]["name"][:18]
                         btn.label = f"● {name}"
+            except Exception:
+                pass
+
+        def action_toggle_sidebar(self):
+            try:
+                sidebar = self.query_one("#sidebar")
+                if sidebar.styles.display == "none":
+                    sidebar.styles.display = "block"
+                    self.notify("Sidebar expanded", title="Layout")
+                else:
+                    sidebar.styles.display = "none"
+                    self.notify("Sidebar collapsed (Full Workspace Mode - Press Ctrl+B to restore)", title="Layout")
             except Exception:
                 pass
 
@@ -5165,6 +5202,9 @@ if HAS_TEXTUAL:
             elif bid == "btn-restore-feature-bak":
                 self.action_open_restore_modal()
 
+            elif bid == "btn-toggle-side":
+                self.action_toggle_sidebar()
+
             elif bid == "btn-side-palette":
                 self.action_open_command_palette()
 
@@ -5456,6 +5496,8 @@ if HAS_TEXTUAL:
                     ok, msg = apply_mcp_preset(ag, preset_id, all_agents=self.agents, broadcast=True)
                     self.load_active_agent_data()
                     self.notify(msg, title="Fleet Broadcast Complete", severity="information" if ok else "error")
+                elif ctype == "sidebar":
+                    self.action_toggle_sidebar()
                 elif ctype == "radar":
                     self.action_open_fleet_radar()
                 elif ctype == "inspector":
