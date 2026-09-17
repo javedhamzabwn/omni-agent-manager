@@ -1570,14 +1570,18 @@ def universal_models_hub(all_agents):
 
     cursor = 0
     agent_items = list(all_agents.values())
+    needs_refresh = True
+    statuses = []
 
     try:
         while True:
-            # Gather fresh statuses
-            statuses = []
-            for a in agent_items:
-                st = get_agent_models_and_providers(a)
-                statuses.append((a, st))
+            if needs_refresh:
+                # Gather fresh statuses
+                statuses = []
+                for a in agent_items:
+                    st = get_agent_models_and_providers(a)
+                    statuses.append((a, st))
+                needs_refresh = False
 
             lines = []
             lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
@@ -1615,7 +1619,7 @@ def universal_models_hub(all_agents):
             lines.append(f"{ind_t}[T] Test / Ping Endpoint Connectivity (Check if local LLM or API is online)")
             lines.append(f"{ind_x}[0] Return to Main Menu")
             lines.append("--------------------------------------------------------------------------------")
-            lines.append(f"{CLR_BOLD}Navigation:{CLR_RESET} [↑/↓] Move Cursor  [Enter] Manage Agent Models  [U/T/0] Actions  [Esc/q] Back")
+            lines.append(f"{CLR_BOLD}Navigation:{CLR_RESET} [↑/↓] Move Cursor  [Enter] Manage Agent Models  [U/T/0] Actions  [r] Refresh  [Esc/q] Back")
             lines.append("================================================================================")
 
             render_frame(lines)
@@ -1630,12 +1634,15 @@ def universal_models_hub(all_agents):
             elif key == 'ENTER':
                 if cursor < len(agent_items):
                     manage_agent_models(agent_items[cursor], all_agents)
+                    needs_refresh = True
                     init_screen()
                 elif cursor == idx_u:
                     run_universal_deploy_wizard(all_agents)
+                    needs_refresh = True
                     init_screen()
                 elif cursor == idx_t:
                     run_endpoint_test_tool()
+                    needs_refresh = True
                     init_screen()
                 elif cursor == idx_x:
                     break
@@ -1643,14 +1650,20 @@ def universal_models_hub(all_agents):
                 val = int(key)
                 if 1 <= val <= len(agent_items):
                     manage_agent_models(agent_items[val-1], all_agents)
+                    needs_refresh = True
                     init_screen()
                 elif val == 0:
                     break
             elif key.upper() == 'U':
                 run_universal_deploy_wizard(all_agents)
+                needs_refresh = True
                 init_screen()
             elif key.upper() == 'T':
                 run_endpoint_test_tool()
+                needs_refresh = True
+                init_screen()
+            elif key.upper() == 'R':
+                needs_refresh = True
                 init_screen()
             elif key in ('ESC', 'q'):
                 break
@@ -1777,14 +1790,24 @@ def manage_agent_models(agent_cfg, all_agents):
     init_screen()
     print(CLR_HIDE_CURSOR, end="", flush=True)
 
+    needs_refresh = True
+    info = None
+    models = []
+    act_m = ""
+    prov = ""
+    base = ""
+    has_k = ""
+
     try:
         while True:
-            info = get_agent_models_and_providers(agent_cfg)
-            models = info["models"]
-            act_m = info["active_model"]
-            prov = info["active_provider"]
-            base = info["base_url"]
-            has_k = "Configured" if info["has_key"] else "None / Optional"
+            if needs_refresh:
+                info = get_agent_models_and_providers(agent_cfg)
+                models = info["models"]
+                act_m = info["active_model"]
+                prov = info["active_provider"]
+                base = info["base_url"]
+                has_k = "Configured" if info["has_key"] else "None / Optional"
+                needs_refresh = False
 
             total_models = len(models)
             cursor = 0 if total_models == 0 else max(0, min(cursor, total_models - 1))
@@ -1832,7 +1855,7 @@ def manage_agent_models(agent_cfg, all_agents):
 
             lines.append("--------------------------------------------------------------------------------")
             lines.append(f"{CLR_BOLD}Actions:{CLR_RESET} [Enter] Set Active  [Space] Toggle ON/OFF  [a] Add Provider/Model")
-            lines.append(f"         [e] Edit Provider    [d] Delete Model       [t] Test Ping  [s] Sync to Agents  [Esc/q] Back")
+            lines.append(f"         [e] Edit Provider    [d] Delete Model       [t] Test Ping  [s] Sync  [r] Refresh  [Esc/q] Back")
             lines.append("================================================================================")
 
             render_frame(lines)
@@ -1845,18 +1868,23 @@ def manage_agent_models(agent_cfg, all_agents):
             elif key == 'ENTER' and total_models > 0:
                 selected_model = models[cursor]
                 set_agent_active_model(agent_cfg, selected_model.get("full_id") or selected_model["id"], provider_id=selected_model.get("provider"))
+                needs_refresh = True
             elif key == 'SPACE' and total_models > 0:
                 selected_model = models[cursor]
                 toggle_agent_model(agent_cfg, selected_model["id"], provider_id=selected_model.get("provider"))
+                needs_refresh = True
             elif key.lower() == 'a':
                 add_provider_interactive(agent_cfg)
+                needs_refresh = True
                 init_screen()
             elif key.lower() == 'e':
                 edit_provider_interactive(agent_cfg, info)
+                needs_refresh = True
                 init_screen()
             elif key in ('d', 'DEL') and total_models > 0:
                 selected_model = models[cursor]
                 delete_model_interactive(agent_cfg, selected_model)
+                needs_refresh = True
                 init_screen()
             elif key.lower() == 't':
                 init_screen()
@@ -1865,9 +1893,14 @@ def manage_agent_models(agent_cfg, all_agents):
                 clr = CLR_GREEN if ok else CLR_RED
                 print(f"\nStatus: {clr}{msg}{CLR_RESET}\n")
                 input("Press [Enter] to continue...")
+                needs_refresh = True
                 init_screen()
             elif key.lower() == 's':
                 sync_provider_to_other_agents(agent_cfg, info, all_agents)
+                needs_refresh = True
+                init_screen()
+            elif key.lower() == 'r':
+                needs_refresh = True
                 init_screen()
             elif key in ('ESC', 'q'):
                 break
@@ -2344,8 +2377,15 @@ def browse_warehouse_import(target_agent_cfg=None):
     cursor = 0
     print(CLR_HIDE_CURSOR, end="", flush=True)
 
+    needs_refresh = True
+    wh_statuses = []
+
     try:
         while True:
+            if needs_refresh:
+                wh_statuses = [(w_name, w_path, os.path.exists(w_path)) for (w_name, w_path) in WAREHOUSES]
+                needs_refresh = False
+
             lines = []
             lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
             lines.append(f"{CLR_BOLD}{CLR_CYAN}                   MASTER SKILLS & AGENTS WAREHOUSE BROWSER                     {CLR_RESET}")
@@ -2353,10 +2393,9 @@ def browse_warehouse_import(target_agent_cfg=None):
             lines.append(f"{CLR_DIM}Import upstream skills into your agents with a single keystroke{CLR_RESET}")
             lines.append("--------------------------------------------------------------------------------")
 
-            for i, (w_name, w_path) in enumerate(WAREHOUSES):
+            for i, (w_name, w_path, exists) in enumerate(wh_statuses):
                 is_cur = (i == cursor)
                 indicator = f"{CLR_CYAN}> {CLR_RESET}" if is_cur else "  "
-                exists = os.path.exists(w_path)
                 status_tag = f"{CLR_GREEN}[AVAILABLE]{CLR_RESET}" if exists else f"{CLR_RED}[MISSING]{CLR_RESET}"
                 if is_cur:
                     lines.append(f"{indicator}{CLR_BOLD}{CLR_REVERSE} [{i+1}] {w_name:<36} {CLR_RESET} {status_tag}")
@@ -2364,7 +2403,7 @@ def browse_warehouse_import(target_agent_cfg=None):
                     lines.append(f"{indicator}{CLR_WHITE} [{i+1}] {w_name:<36}{CLR_RESET} {status_tag}")
 
             lines.append("--------------------------------------------------------------------------------")
-            lines.append(f"{CLR_BOLD}Actions:{CLR_RESET} [↑/↓] Navigate  [Enter] Browse Skills  [Esc/q] Back")
+            lines.append(f"{CLR_BOLD}Actions:{CLR_RESET} [↑/↓] Navigate  [Enter] Browse Skills  [r] Refresh  [Esc/q] Back")
             lines.append("================================================================================")
 
             render_frame(lines)
@@ -2373,13 +2412,17 @@ def browse_warehouse_import(target_agent_cfg=None):
             if key in ('UP', 'k'):
                 if cursor > 0: cursor -= 1
             elif key in ('DOWN', 'j'):
-                if cursor < len(WAREHOUSES) - 1: cursor += 1
+                if cursor < len(wh_statuses) - 1: cursor += 1
+            elif key.lower() == 'r':
+                needs_refresh = True
+                init_screen()
             elif key == 'ENTER':
-                w_name, w_path = WAREHOUSES[cursor]
-                if not os.path.exists(w_path):
+                w_name, w_path, exists = wh_statuses[cursor]
+                if not exists:
                     init_screen()
                     print(f"\n{CLR_RED}Warehouse directory not found:{CLR_RESET} {w_path}")
                     input("Press [Enter] to continue...")
+                    needs_refresh = True
                     init_screen()
                     continue
 
@@ -2541,12 +2584,20 @@ def manage_single_agent(agent_cfg, all_agents):
     init_screen()
     print(CLR_HIDE_CURSOR, end="", flush=True)
 
+    needs_refresh = True
+    act_s, av_s = [], []
+    act_m, dis_m = {}, {}
+    plugs = []
+    m_info = {"active_model": "None", "active_provider": "None"}
+
     try:
         while True:
-            act_s, av_s = get_agent_skills(agent_cfg)
-            act_m, dis_m = read_mcp_config(agent_cfg)
-            plugs = get_agent_plugins(agent_cfg)
-            m_info = get_agent_models_and_providers(agent_cfg)
+            if needs_refresh:
+                act_s, av_s = get_agent_skills(agent_cfg)
+                act_m, dis_m = read_mcp_config(agent_cfg)
+                plugs = get_agent_plugins(agent_cfg)
+                m_info = get_agent_models_and_providers(agent_cfg)
+                needs_refresh = False
 
             lines = []
             lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
@@ -2567,7 +2618,7 @@ def manage_single_agent(agent_cfg, all_agents):
                     lines.append(f"{indicator}{CLR_WHITE} [{num}] {title:<28}{CLR_RESET}  {CLR_DIM}{desc}{CLR_RESET}")
 
             lines.append("--------------------------------------------------------------------------------")
-            lines.append(f"{CLR_BOLD}Navigation:{CLR_RESET} [↑/↓] Move Cursor  [Enter] Select Option  [1-7/0/M] Jump  [Esc/q] Back")
+            lines.append(f"{CLR_BOLD}Navigation:{CLR_RESET} [↑/↓] Move Cursor  [Enter] Select Option  [1-7/0/M] Jump  [r] Refresh  [Esc/q] Back")
             lines.append("================================================================================")
 
             render_frame(lines)
@@ -2585,6 +2636,7 @@ def manage_single_agent(agent_cfg, all_agents):
                         init_screen()
                         print(f"\n{CLR_YELLOW}No local skills folder for {agent_cfg['name']}.{CLR_RESET}")
                         input("Press [Enter] to continue...")
+                        needs_refresh = True
                         init_screen()
                         continue
                     os.makedirs(s_dir, exist_ok=True)
@@ -2597,6 +2649,7 @@ def manage_single_agent(agent_cfg, all_agents):
                             sp = os.path.join(av_dir, s)
                             if s in new_sel and os.path.exists(sp): shutil.move(sp, ap)
                             elif s not in new_sel and os.path.exists(ap): shutil.move(ap, sp)
+                    needs_refresh = True
                     init_screen()
                 elif cursor == 1:
                     mf = agent_cfg.get("mcp_file")
@@ -2604,6 +2657,7 @@ def manage_single_agent(agent_cfg, all_agents):
                         init_screen()
                         print(f"\n{CLR_YELLOW}No MCP configuration file for {agent_cfg['name']}.{CLR_RESET}")
                         input("Press [Enter] to continue...")
+                        needs_refresh = True
                         init_screen()
                         continue
                     act_m, dis_m = read_mcp_config(agent_cfg)
@@ -2611,15 +2665,19 @@ def manage_single_agent(agent_cfg, all_agents):
                     new_sel = run_checklist("MCP Servers Checklist Manager", all_m, set(act_m.keys()), agent_name=agent_cfg["name"])
                     if new_sel is not None:
                         save_mcp_servers(agent_cfg, new_sel)
+                    needs_refresh = True
                     init_screen()
                 elif cursor == 2:
                     manage_agent_models(agent_cfg, all_agents)
+                    needs_refresh = True
                     init_screen()
                 elif cursor == 3:
                     add_skills_interactive(agent_cfg=agent_cfg, all_agents=all_agents)
+                    needs_refresh = True
                     init_screen()
                 elif cursor == 4:
                     add_mcp_interactive(agent_cfg=agent_cfg, all_agents=all_agents)
+                    needs_refresh = True
                     init_screen()
                 elif cursor == 5:
                     # Plugins checklist
@@ -2631,6 +2689,7 @@ def manage_single_agent(agent_cfg, all_agents):
                         init_screen()
                         print(f"\n{CLR_YELLOW}No plugins directory found for {agent_cfg['name']}.{CLR_RESET}")
                         input("Press [Enter] to continue...")
+                    needs_refresh = True
                     init_screen()
                 elif cursor == 6:
                     p = agent_cfg.get("skills_dir") or agent_cfg.get("mcp_file") or USERPROFILE
@@ -2646,6 +2705,10 @@ def manage_single_agent(agent_cfg, all_agents):
             elif key == '7': cursor = 6
             elif key.upper() == 'M':
                 manage_agent_models(agent_cfg, all_agents)
+                needs_refresh = True
+                init_screen()
+            elif key.upper() == 'R':
+                needs_refresh = True
                 init_screen()
             elif key == '0' or key in ('ESC', 'q'):
                 break
@@ -2658,105 +2721,150 @@ def manage_single_agent(agent_cfg, all_agents):
 def open_agent_folder_cli():
     keys = list(FOLDER_DATA.keys())
     cursor_idx = 0
-    while True:
-        init_screen()
-        print(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
-        print(f"{CLR_BOLD}{CLR_CYAN}                   AI AGENT ECOSYSTEM CONTROL CENTER - FOLDERS                  {CLR_RESET}")
-        print(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
-        print(f"{CLR_WHITE}{CLR_BOLD}Select an AI Agent or Category to explore its Skills, MCPs, and Configs:{CLR_RESET}")
-        print("--------------------------------------------------------------------------------")
-        for idx, key in enumerate(keys):
-            cat = FOLDER_DATA[key]
-            is_active = (idx == cursor_idx)
-            cursor = f"{CLR_CYAN}>{CLR_RESET}" if is_active else " "
-            num_tag = f"[{key:>2}]"
-            if key == "17":
-                print(f"{CLR_DIM}--- MASTER PUBLISH WAREHOUSES (D: DRIVE) -------------------------------------{CLR_RESET}")
-            if is_active:
-                print(f" {cursor} {CLR_REVERSE} {num_tag} {cat['title']:<32}{CLR_RESET} {CLR_YELLOW}{cat['desc']}{CLR_RESET}")
+    init_screen()
+    print(CLR_HIDE_CURSOR, end="", flush=True)
+
+    try:
+        while True:
+            lines = []
+            lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
+            lines.append(f"{CLR_BOLD}{CLR_CYAN}                   AI AGENT ECOSYSTEM CONTROL CENTER - FOLDERS                  {CLR_RESET}")
+            lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
+            lines.append(f"{CLR_WHITE}{CLR_BOLD}Select an AI Agent or Category to explore its Skills, MCPs, and Configs:{CLR_RESET}")
+            lines.append("--------------------------------------------------------------------------------")
+            for idx, key in enumerate(keys):
+                cat = FOLDER_DATA[key]
+                is_active = (idx == cursor_idx)
+                cursor = f"{CLR_CYAN}>{CLR_RESET}" if is_active else " "
+                num_tag = f"[{key:>2}]"
+                if key == "17":
+                    lines.append(f"{CLR_DIM}--- MASTER PUBLISH WAREHOUSES (D: DRIVE) -------------------------------------{CLR_RESET}")
+                if is_active:
+                    lines.append(f" {cursor} {CLR_REVERSE} {num_tag} {cat['title']:<32}{CLR_RESET} {CLR_YELLOW}{cat['desc']}{CLR_RESET}")
+                else:
+                    lines.append(f" {cursor} {CLR_BOLD}{num_tag}{CLR_RESET} {cat['title']:<32} {CLR_DIM}{cat['desc']}{CLR_RESET}")
+
+            is_exit = (cursor_idx == len(keys))
+            exit_cur = f"{CLR_CYAN}>{CLR_RESET}" if is_exit else " "
+            if is_exit:
+                lines.append(f" {exit_cur} {CLR_REVERSE} [ 0] Return to Main Menu                 {CLR_RESET}")
             else:
-                print(f" {cursor} {CLR_BOLD}{num_tag}{CLR_RESET} {cat['title']:<32} {CLR_DIM}{cat['desc']}{CLR_RESET}")
+                lines.append(f" {exit_cur} {CLR_BOLD} [ 0]{CLR_RESET} Return to Main Menu")
+            lines.append("--------------------------------------------------------------------------------")
+            lines.append(f"{CLR_DIM}Navigation: [↑/↓] Move  [Enter] Open Category  [1-20/0] Jump  [Esc/q] Back{CLR_RESET}")
+            lines.append("================================================================================")
 
-        is_exit = (cursor_idx == len(keys))
-        exit_cur = f"{CLR_CYAN}>{CLR_RESET}" if is_exit else " "
-        if is_exit:
-            print(f" {exit_cur} {CLR_REVERSE} [ 0] Return to Main Menu                 {CLR_RESET}")
-        else:
-            print(f" {exit_cur} {CLR_BOLD} [ 0]{CLR_RESET} Return to Main Menu")
-        print("--------------------------------------------------------------------------------")
-        print(f"{CLR_DIM}Navigation: [↑/↓] Move  [Enter] Open Category  [1-20/0] Jump  [Esc/q] Back{CLR_RESET}")
+            render_frame(lines)
 
-        k = read_key()
-        if k in ('UP', 'k'):
-            cursor_idx = (cursor_idx - 1) % (len(keys) + 1)
-        elif k in ('DOWN', 'j'):
-            cursor_idx = (cursor_idx + 1) % (len(keys) + 1)
-        elif k in ('ESC', 'q') or (k == 'ENTER' and cursor_idx == len(keys)) or k == '0':
-            break
-        elif k == 'ENTER':
-            run_folder_category_cli(keys[cursor_idx])
-        elif k.isdigit():
-            val = k
-            if val in FOLDER_DATA:
-                cursor_idx = keys.index(val)
-                run_folder_category_cli(val)
+            k = read_key()
+            if k in ('UP', 'k'):
+                cursor_idx = (cursor_idx - 1) % (len(keys) + 1)
+            elif k in ('DOWN', 'j'):
+                cursor_idx = (cursor_idx + 1) % (len(keys) + 1)
+            elif k in ('ESC', 'q') or (k == 'ENTER' and cursor_idx == len(keys)) or k == '0':
+                break
+            elif k == 'ENTER':
+                run_folder_category_cli(keys[cursor_idx])
+                init_screen()
+            elif k.isdigit():
+                val = k
+                if val in FOLDER_DATA:
+                    cursor_idx = keys.index(val)
+                    run_folder_category_cli(val)
+                    init_screen()
+    finally:
+        print(CLR_SHOW_CURSOR, end="", flush=True)
 
 def run_folder_category_cli(cat_key):
     cat = FOLDER_DATA.get(cat_key)
     if not cat: return
     items = cat.get("items", [])
     cursor_idx = 0
-    while True:
-        init_screen()
-        print(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
-        print(f"{CLR_BOLD}{CLR_CYAN}  {cat['title'].upper()} - FOLDERS & CONFIGURATIONS {CLR_RESET}")
-        print(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
-        for idx, item in enumerate(items):
-            name, path, desc = item
-            exists = os.path.exists(path)
-            st = f"{CLR_GREEN}EXISTS{CLR_RESET}" if exists else f"{CLR_RED}MISSING{CLR_RESET}"
-            is_active = (idx == cursor_idx)
-            indicator = f"{CLR_CYAN}> {CLR_RESET}" if is_active else "  "
-            if is_active:
-                print(f"{indicator}{CLR_REVERSE} [{idx+1:>2}] {name:<36} [{st}]{CLR_RESET}")
-                print(f"     {CLR_YELLOW}Path: {path}{CLR_RESET}")
-                print(f"     {CLR_DIM}Desc: {desc}{CLR_RESET}")
-            else:
-                print(f"{indicator}{CLR_WHITE} [{idx+1:>2}] {name:<36} [{st}]{CLR_RESET}")
-        print("--------------------------------------------------------------------------------")
-        print(f"{CLR_DIM}[E] Explorer  [V] Editor  [C] Copy Path  [T] Terminal  [↑/↓] Move  [Esc/q] Back{CLR_RESET}")
+    init_screen()
+    print(CLR_HIDE_CURSOR, end="", flush=True)
 
-        k = read_key()
-        if k in ('UP', 'k'):
-            cursor_idx = (cursor_idx - 1) % len(items)
-        elif k in ('DOWN', 'j'):
-            cursor_idx = (cursor_idx + 1) % len(items)
-        elif k in ('ESC', 'q'):
-            break
-        elif k in ('ENTER', 'e', 'E'):
-            desktop_open_explorer(items[cursor_idx][1])
-        elif k in ('v', 'V'):
-            desktop_open_editor(items[cursor_idx][1])
-        elif k in ('c', 'C'):
-            desktop_copy_clipboard(items[cursor_idx][1])
-        elif k in ('t', 'T'):
-            desktop_open_terminal(items[cursor_idx][1])
+    items_status = [(name, path, desc, os.path.exists(path)) for (name, path, desc) in items]
+
+    try:
+        while True:
+            lines = []
+            lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
+            lines.append(f"{CLR_BOLD}{CLR_CYAN}  {cat['title'].upper()} - FOLDERS & CONFIGURATIONS {CLR_RESET}")
+            lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
+            for idx, (name, path, desc, exists) in enumerate(items_status):
+                st = f"{CLR_GREEN}EXISTS{CLR_RESET}" if exists else f"{CLR_RED}MISSING{CLR_RESET}"
+                is_active = (idx == cursor_idx)
+                indicator = f"{CLR_CYAN}> {CLR_RESET}" if is_active else "  "
+                if is_active:
+                    lines.append(f"{indicator}{CLR_REVERSE} [{idx+1:>2}] {name:<36} [{st}]{CLR_RESET}")
+                    lines.append(f"     {CLR_YELLOW}Path: {path}{CLR_RESET}")
+                    lines.append(f"     {CLR_DIM}Desc: {desc}{CLR_RESET}")
+                else:
+                    lines.append(f"{indicator}{CLR_WHITE} [{idx+1:>2}] {name:<36} [{st}]{CLR_RESET}")
+            lines.append("--------------------------------------------------------------------------------")
+            lines.append(f"{CLR_DIM}[E] Explorer  [V] Editor  [C] Copy Path  [T] Terminal  [↑/↓] Move  [Esc/q] Back{CLR_RESET}")
+            lines.append("================================================================================")
+
+            render_frame(lines)
+
+            k = read_key()
+            if k in ('UP', 'k'):
+                cursor_idx = (cursor_idx - 1) % len(items)
+            elif k in ('DOWN', 'j'):
+                cursor_idx = (cursor_idx + 1) % len(items)
+            elif k in ('ESC', 'q'):
+                break
+            elif k in ('ENTER', 'e', 'E'):
+                desktop_open_explorer(items[cursor_idx][1])
+            elif k in ('v', 'V'):
+                desktop_open_editor(items[cursor_idx][1])
+            elif k in ('c', 'C'):
+                desktop_copy_clipboard(items[cursor_idx][1])
+            elif k in ('t', 'T'):
+                desktop_open_terminal(items[cursor_idx][1])
+    finally:
+        print(CLR_SHOW_CURSOR, end="", flush=True)
 
 def master_hub():
     cursor = 0
     init_screen()
     print(CLR_HIDE_CURSOR, end="", flush=True)
 
+    needs_refresh = True
+    agents = {}
+    agent_list = []
+    agent_rows = []
+    tot_s = 0
+    tot_m = 0
+    tot_p = 0
+
     try:
         while True:
-            # Dynamically discover all agents installed on this machine
-            agents = discover_installed_agents()
-            agent_list = list(agents.values())
-
-            # Compute system totals
-            tot_s = sum(len(get_agent_skills(a)[0]) for a in agent_list)
-            tot_m = sum(len(read_mcp_config(a)[0]) for a in agent_list)
-            tot_p = sum(len(get_agent_plugins(a)) for a in agent_list)
+            if needs_refresh:
+                agents = discover_installed_agents()
+                agent_list = list(agents.values())
+                agent_rows = []
+                tot_s = 0
+                tot_m = 0
+                tot_p = 0
+                for a in agent_list:
+                    act_s, _ = get_agent_skills(a)
+                    act_m, _ = read_mcp_config(a)
+                    plugs = get_agent_plugins(a)
+                    m_info = get_agent_models_and_providers(a)
+                    s_count = len(act_s)
+                    m_count = len(act_m)
+                    p_count = len(plugs)
+                    tot_s += s_count
+                    tot_m += m_count
+                    tot_p += p_count
+                    tag = f"Model: {m_info['active_model'][:18]:<18} | Skills: {s_count:<3} | MCPs: {m_count:<2}"
+                    agent_rows.append({
+                        "name": a["name"],
+                        "tag": tag,
+                        "cfg": a
+                    })
+                needs_refresh = False
 
             lines = []
             lines.append(f"{CLR_BOLD}{CLR_CYAN}================================================================================{CLR_RESET}")
@@ -2769,19 +2877,15 @@ def master_hub():
             lines.append("--------------------------------------------------------------------------------")
             lines.append(f"{CLR_WHITE}Detected AI Coding Agents & Platforms:{CLR_RESET}")
 
-            for i, a in enumerate(agent_list):
+            for i, row in enumerate(agent_rows):
                 is_cur = (i == cursor)
                 indicator = f"{CLR_CYAN}> {CLR_RESET}" if is_cur else "  "
-                act_s, av_s = get_agent_skills(a)
-                act_m, dis_m = read_mcp_config(a)
-                plugs = get_agent_plugins(a)
-                m_info = get_agent_models_and_providers(a)
-
-                tag = f"Model: {m_info['active_model'][:18]:<18} | Skills: {len(act_s):<3} | MCPs: {len(act_m):<2}"
+                name = row["name"]
+                tag = row["tag"]
                 if is_cur:
-                    lines.append(f"{indicator}{CLR_BOLD}{CLR_REVERSE} [{i+1:>2}] {a['name']:<27} {CLR_RESET}  {CLR_YELLOW}{tag}{CLR_RESET}")
+                    lines.append(f"{indicator}{CLR_BOLD}{CLR_REVERSE} [{i+1:>2}] {name:<27} {CLR_RESET}  {CLR_YELLOW}{tag}{CLR_RESET}")
                 else:
-                    lines.append(f"{indicator}{CLR_WHITE} [{i+1:>2}] {a['name']:<27}{CLR_RESET}  {CLR_DIM}{tag}{CLR_RESET}")
+                    lines.append(f"{indicator}{CLR_WHITE} [{i+1:>2}] {name:<27}{CLR_RESET}  {CLR_DIM}{tag}{CLR_RESET}")
 
             lines.append("--------------------------------------------------------------------------------")
             lines.append(f"{CLR_BOLD}Global & Ecosystem Operations:{CLR_RESET}")
@@ -2804,7 +2908,7 @@ def master_hub():
             lines.append(f"{ind_f}[F] 📂 Open Agent Folders & Files (20 Categories, 150+ Locations)")
             lines.append(f"{ind_x}[0] Exit")
             lines.append("--------------------------------------------------------------------------------")
-            lines.append(f"{CLR_BOLD}Navigation:{CLR_RESET} [↑/↓] Move Cursor  [Enter] Select  [1-{len(agent_list)}/M/G/W/F/0] Jump  [Esc/q] Quit")
+            lines.append(f"{CLR_BOLD}Navigation:{CLR_RESET} [↑/↓] Move Cursor  [Enter] Select  [1-{len(agent_list)}/M/G/W/F/0] Jump  [R] Refresh  [Esc/q] Quit")
             lines.append("================================================================================")
 
             render_frame(lines)
@@ -2816,22 +2920,29 @@ def master_hub():
                 if cursor > 0: cursor -= 1
             elif key in ('DOWN', 'j'):
                 if cursor < total_menu_rows - 1: cursor += 1
+            elif key in ('r', 'R'):
+                needs_refresh = True
             elif key == 'ENTER':
                 if cursor < len(agent_list):
                     manage_single_agent(agent_list[cursor], agents)
                     init_screen()
+                    needs_refresh = True
                 elif cursor == idx_m:
                     universal_models_hub(agents)
                     init_screen()
+                    needs_refresh = True
                 elif cursor == idx_g:
                     global_skills_hub(agents)
                     init_screen()
+                    needs_refresh = True
                 elif cursor == idx_w:
                     browse_warehouse_import()
                     init_screen()
+                    needs_refresh = True
                 elif cursor == idx_f:
                     open_agent_folder_cli()
                     init_screen()
+                    needs_refresh = True
                 elif cursor == idx_x:
                     break
             elif key.isdigit():
@@ -2839,20 +2950,25 @@ def master_hub():
                 if 1 <= val <= len(agent_list):
                     manage_single_agent(agent_list[val-1], agents)
                     init_screen()
+                    needs_refresh = True
                 elif val == 0:
                     break
             elif key.upper() == 'M':
                 universal_models_hub(agents)
                 init_screen()
+                needs_refresh = True
             elif key.upper() == 'G':
                 global_skills_hub(agents)
                 init_screen()
+                needs_refresh = True
             elif key.upper() == 'W':
                 browse_warehouse_import()
                 init_screen()
+                needs_refresh = True
             elif key.upper() == 'F':
                 open_agent_folder_cli()
                 init_screen()
+                needs_refresh = True
             elif key in ('ESC', 'q'):
                 break
     finally:
