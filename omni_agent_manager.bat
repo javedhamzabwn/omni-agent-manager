@@ -9,46 +9,63 @@ if "%APP_DIR:~-1%"=="\" set "APP_DIR=%APP_DIR:~0,-1%"
 set "APP_BAT=%~f0"
 set "APP_PY=%APP_DIR%\omni_agent_manager.py"
 
-:: Always ensure working directory is APP_DIR
 cd /d "%APP_DIR%"
 
-:: Bypass elevation for informational or explicit flags
+:: Check for explicit flags that affect terminal or elevation
+if /i "%~1"=="--no-wt" (
+    set "OMNI_NO_WT=1"
+    shift
+)
+if /i "%~1"=="--elevated" (
+    set "IS_ELEVATED=1"
+    shift
+)
+
+:: Informational or headless CLI queries stay in current console
 if /i "%~1"=="--help" goto :launch_app
 if /i "%~1"=="-h" goto :launch_app
 if /i "%~1"=="--version" goto :launch_app
 if /i "%~1"=="-v" goto :launch_app
-if /i "%~1"=="--presets" goto :launch_app
-if /i "%~1"=="--health" goto :launch_app
 if /i "%~1"=="--export" goto :launch_app
 if /i "%~1"=="--import" goto :launch_app
-if /i "%~1"=="--no-admin" (
-    shift
-    goto :launch_app
-)
-if /i "%~1"=="--elevated" (
-    shift
-    goto :launch_app
+
+:: If Windows Terminal (wt.exe) is available and we're not inside it, relaunch inside Windows Terminal
+if not defined WT_SESSION (
+    if not "%OMNI_NO_WT%"=="1" (
+        where wt.exe >nul 2>&1
+        if !errorlevel! equ 0 (
+            set "OMNI_NO_WT=1"
+            start "" wt.exe -d "%APP_DIR%" cmd /c ""%APP_BAT%" %*"
+            exit /b 0
+        )
+    )
 )
 
-:: Check for Administrator permissions
+:: Check if user explicitly requested Administrator privileges
+if /i "%~1"=="--admin" goto :do_elevate
+if /i "%~1"=="--elevate" goto :do_elevate
+goto :launch_app
+
+:do_elevate
+shift
 fltmc >nul 2>&1
 if %errorlevel% equ 0 goto :launch_app
 net session >nul 2>&1
 if %errorlevel% equ 0 goto :launch_app
 
 echo ======================================================================
-echo  [OmniAgent Manager] Administrator Elevation Required
+echo  [OmniAgent Manager] Administrator Elevation Requested
 echo ======================================================================
 echo  Requesting Windows UAC permissions to configure all AI agent runtimes...
 echo.
 
-:: Launch elevated batch file directly using PowerShell Start-Process
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%APP_BAT%' -ArgumentList '--elevated %*' -WorkingDirectory '%APP_DIR%' -Verb RunAs"
-if %errorlevel% equ 0 exit /b
-
-echo [WARNING] Administrator elevation declined or cancelled.
-echo Launching in standard user mode...
-echo.
+where wt.exe >nul 2>&1
+if %errorlevel% equ 0 (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process wt.exe -ArgumentList '-d `\"%APP_DIR%`\" cmd /c `\"`\"%APP_BAT%`\" --elevated %*`\"' -Verb RunAs"
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%APP_BAT%' -ArgumentList '--elevated %*' -WorkingDirectory '%APP_DIR%' -Verb RunAs"
+)
+exit /b 0
 
 :launch_app
 cd /d "%APP_DIR%"
@@ -84,11 +101,12 @@ echo   [2] Classic Minimal Terminal Menu (--classic)
 echo   [3] Agent Folders Explorer (--folders)
 echo   [4] Fleet ^& Process Radar (--radar)
 echo   [5] Run MCP Health Heartbeats (--health)
-echo   [6] Exit
+echo   [6] Run as Administrator (--admin)
+echo   [7] Exit
 echo.
 echo ======================================================================
 set "CHOICE="
-set /p "CHOICE=Select an option [1-6] (Default: 1): "
+set /p "CHOICE=Select an option [1-7] (Default: 1): "
 
 if "%CHOICE%"=="" goto :opt1
 if "%CHOICE%"=="1" goto :opt1
@@ -97,6 +115,7 @@ if "%CHOICE%"=="3" goto :opt3
 if "%CHOICE%"=="4" goto :opt4
 if "%CHOICE%"=="5" goto :opt5
 if "%CHOICE%"=="6" goto :opt6
+if "%CHOICE%"=="7" goto :opt7
 echo [Invalid selection: %CHOICE%]
 timeout /t 2 >nul
 goto :menu
@@ -126,6 +145,9 @@ pause
 goto :check_exit
 
 :opt6
+goto :do_elevate
+
+:opt7
 exit /b 0
 
 :check_exit
